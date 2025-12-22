@@ -155,3 +155,7 @@ PRIORIDAD_DOMINIOS = [
 
 # PALABRAS NEGRAS (BLACKLIST)
 PALABRAS_EXCLUIDAS = ["REMUX", "FULLUHD", "ISO", "720P", "CANAL TELEGRAM", "LISTADO", "HIDE"]
+
+# --- INTERVALO DE COMPROBACIÓN ---
+# Tiempo en segundos que el bot duerme entre escaneos (Por defecto: 10 minutos)
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))
