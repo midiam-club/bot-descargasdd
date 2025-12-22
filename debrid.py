@@ -10,14 +10,13 @@ def determinar_debrid(enlace):
     for dominio, servicio in config.HOSTER_PREFS.items():
         if dominio in enlace.lower():
             return servicio
-    return "RD"
+    return "RD" 
 
 def obtener_nombre_archivo_de_url(url):
     try:
         path = unquote(url.split("?")[0])
         nombre = os.path.basename(path)
         if nombre and "." in nombre:
-            # SANITIZAMOS AQUÍ TAMBIÉN POR SI ACASO
             return sanitizar_nombre(nombre)
     except: pass
     return "archivo_desconocido.dat"
@@ -31,7 +30,6 @@ def unrestrict_rd(link):
         r = requests.post(url, headers=headers, data={"link": link}, timeout=30)
         if r.status_code == 200:
             data = r.json()
-            # SANITIZAMOS EL NOMBRE QUE DEVUELVE LA API
             return data.get("download"), sanitizar_nombre(data.get("filename"))
         elif r.status_code == 503:
             print("   [API] Real-Debrid en mantenimiento.")
@@ -52,7 +50,6 @@ def unrestrict_dl(link):
             res = r.json()
             if res.get("success"):
                 val = res["value"][0]
-                # SANITIZAMOS EL NOMBRE QUE DEVUELVE LA API
                 return val.get("downloadUrl"), sanitizar_nombre(val.get("name"))
             else:
                 print(f"   [API] Error DL: {res.get('error')}")
@@ -62,21 +59,32 @@ def unrestrict_dl(link):
         print(f"   [API] Excepción conectando a DL: {e}")
     return None, None
 
+# --- MODIFICADO: Devuelve 3 valores (url, nombre, servicio) ---
 def obtener_enlace_premium(link):
     servicio_preferido = determinar_debrid(link)
+    
     if servicio_preferido == "RD":
         url, name = unrestrict_rd(link)
-        if url: return url, name
-        if config.DL_TOKEN:
-            return unrestrict_dl(link)
+        if url: return url, name, "RD"
+        
+        if config.DL_TOKEN: # Fallback
+            print("   [INFO] Falló RD. Probando fallback con Debrid-Link...")
+            url, name = unrestrict_dl(link)
+            if url: return url, name, "DL"
+            
     elif servicio_preferido == "DL":
         url, name = unrestrict_dl(link)
-        if url: return url, name
-        if config.RD_TOKEN:
-            return unrestrict_rd(link)
-    return None, None
+        if url: return url, name, "DL"
+        
+        if config.RD_TOKEN: # Fallback
+            print("   [INFO] Falló DL. Probando fallback con Real-Debrid...")
+            url, name = unrestrict_rd(link)
+            if url: return url, name, "RD"
+            
+    return None, None, None
 
-def descargar_archivo(url, carpeta_destino, titulo_referencia):
+# --- MODIFICADO: Recibe host y debrid_source ---
+def descargar_archivo(url, carpeta_destino, titulo_referencia, host_original=None, debrid_source=None):
     if not os.path.exists(carpeta_destino):
         os.makedirs(carpeta_destino)
         
@@ -88,12 +96,10 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
         print(f"   [SKIP] Archivo ya existe: {nombre_archivo}")
         return ruta_final
 
-    # --- SEMÁFORO: ESPERAR TURNO ---
     print(f"   [ESPERA] Esperando slot de descarga para: {nombre_archivo}...")
     state.acquire_download_slot()
-    # -------------------------------
 
-    print(f"   [DOWNLOAD] Iniciando: {nombre_archivo}")
+    print(f"   [DOWNLOAD] Iniciando: {nombre_archivo} ({host_original}) via {debrid_source}")
     
     try:
         headers = {"User-Agent": config.DEFAULT_USER_AGENT}
@@ -117,7 +123,9 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
                         if elapsed > 0:
                             speed_mb = (descargado / (1024 * 1024)) / elapsed
                         
-                        state.update_download(titulo_referencia, nombre_archivo, descargado, total_size, speed_mb)
+                        # PASAMOS HOST Y DEBRID AL MONITOR
+                        state.update_download(titulo_referencia, nombre_archivo, descargado, total_size, speed_mb, 
+                                            host=host_original, debrid=debrid_source)
 
                         if config.SPEED_LIMIT_MB > 0 and config.ENABLE_SPEED_LIMIT: 
                              if debe_aplicar_limite():
@@ -134,20 +142,13 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
 
         os.rename(ruta_temp, ruta_final)
         
-        # --- LIBERAR SLOT (Éxito) ---
         state.release_download_slot()
-        # ----------------------------
-
         state.finish_download(titulo_referencia, nombre_archivo, avg_speed, duration_str)
         return ruta_final
 
     except Exception as e:
         print(f"   [ERROR] Falló la descarga de {nombre_archivo}: {e}")
-        
-        # --- LIBERAR SLOT (Error) ---
         state.release_download_slot()
-        # ----------------------------
-
         state.remove_download(titulo_referencia, nombre_archivo)
         if os.path.exists(ruta_temp):
             try: os.remove(ruta_temp)

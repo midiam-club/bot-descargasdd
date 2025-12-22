@@ -8,8 +8,6 @@ class DownloadMonitor:
         self.active_downloads = {}
         self.history = {}
         self.total_speed = 0.0
-        
-        # --- NUEVO: TÍTULOS COMPLETADOS ---
         self.completed_titles = set()
         
         # Gestión de Slots
@@ -22,12 +20,10 @@ class DownloadMonitor:
             "limit_value": config.SPEED_LIMIT_MB
         }
 
-    # --- NUEVO MÉTODO: MARCAR COMO COMPLETADO ---
     def mark_completed(self, titulo):
         with self._lock:
             self.completed_titles.add(titulo)
 
-    # --- SEMÁFORO ---
     def acquire_download_slot(self):
         with self.download_condition:
             while self.current_downloading_files >= self.dynamic_config["max_parallel"]:
@@ -40,20 +36,28 @@ class DownloadMonitor:
                 self.current_downloading_files -= 1
             self.download_condition.notify_all()
 
-    # --- RESTO DE MÉTODOS (Iguales) ---
-    def update_download(self, pelicula, archivo, leido_bytes, total_bytes, velocidad_mb):
+    # --- MODIFICADO: ACEPTA HOST Y DEBRID ---
+    def update_download(self, pelicula, archivo, leido_bytes, total_bytes, velocidad_mb, host=None, debrid=None):
         with self._lock:
             if pelicula not in self.active_downloads:
                 self.active_downloads[pelicula] = {}
             
             porcentaje = (leido_bytes / total_bytes) * 100 if total_bytes > 0 else 0
             
+            # Recuperamos datos previos para no machacar el host/debrid si vienen None en updates parciales
+            datos_previos = self.active_downloads[pelicula].get(archivo, {})
+            host_final = host if host else datos_previos.get("host", "?")
+            debrid_final = debrid if debrid else datos_previos.get("debrid", "?")
+
             self.active_downloads[pelicula][archivo] = {
                 "progress": round(porcentaje, 1),
                 "speed": round(velocidad_mb, 2),
                 "downloaded": round(leido_bytes / (1024*1024), 2),
                 "total": round(total_bytes / (1024*1024), 2),
-                "status": "downloading"
+                "status": "downloading",
+                # GUARDAMOS LA INFO EXTRA
+                "host": host_final,
+                "debrid": debrid_final
             }
             self._recalculate_total_speed()
 
@@ -67,7 +71,9 @@ class DownloadMonitor:
                 "speed": 0,
                 "downloaded": 0,
                 "total": 0,
-                "status": "extracting"
+                "status": "extracting",
+                "host": "Local",   # Valor dummy
+                "debrid": "System" # Valor dummy
             }
 
     def clean_extraction(self, pelicula):
@@ -139,7 +145,6 @@ class DownloadMonitor:
                 "history": self.history,
                 "total_speed": self.total_speed,
                 "config": self.dynamic_config,
-                # Enviamos la lista de completados al frontend
                 "completed": list(self.completed_titles)
             }
 

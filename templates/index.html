@@ -84,16 +84,24 @@
                                 <div class="bg-gray-900/40 p-2 rounded border border-gray-700/50" 
                                      :class="data.status === 'extracting' ? 'border-orange-500/50 bg-orange-900/10' : ''"> 
                                     <div class="flex justify-between text-xs mb-1">
-                                        <div class="flex items-center gap-2 truncate w-2/3">
-                                            <span x-show="data.status === 'extracting'">📦</span>
-                                            <span x-show="data.status !== 'extracting'">📄</span>
-                                            <span class="font-mono text-blue-200 truncate" 
-                                                  :class="data.status === 'extracting' ? 'text-orange-300 font-bold' : ''"
-                                                  x-text="filename"></span>
-                                        </div>
-                                        <span x-show="data.status !== 'extracting'" class="text-green-300" x-text="data.speed + ' MB/s'"></span>
-                                        <span x-show="data.status === 'extracting'" class="text-orange-400 animate-pulse">Descomprimiendo...</span>
-                                    </div>
+    <div class="flex flex-col truncate w-2/3"> <div class="flex items-center gap-2">
+            <span x-show="data.status === 'extracting'">📦</span>
+            <span x-show="data.status !== 'extracting'">📄</span>
+            <span class="font-mono text-blue-200 truncate" 
+                  :class="data.status === 'extracting' ? 'text-orange-300 font-bold' : ''"
+                  x-text="filename"></span>
+        </div>
+        
+        <div x-show="data.status !== 'extracting' && data.host" class="ml-6 flex items-center gap-2">
+            <span class="text-[10px] text-gray-500" x-text="'(' + data.host + ')'"></span>
+            <span class="text-[10px] font-bold bg-gray-700 px-1 rounded text-blue-300" 
+                  x-text="'[' + data.debrid + ']'"></span>
+        </div>
+    </div>
+    
+    <span x-show="data.status !== 'extracting'" class="text-green-300 self-start" x-text="data.speed + ' MB/s'"></span>
+    <span x-show="data.status === 'extracting'" class="text-orange-400 animate-pulse self-start">Descomprimiendo...</span>
+</div>
                                     <div class="w-full bg-gray-700 rounded-full h-1.5 relative overflow-hidden">
                                         <div class="h-1.5 rounded-full transition-all duration-500 ease-out"
                                              :class="data.status === 'extracting' ? 'bg-orange-500' : 'bg-blue-500'"
