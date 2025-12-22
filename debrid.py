@@ -96,7 +96,7 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
     print(f"   [DOWNLOAD] Iniciando: {nombre_archivo}")
     
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": config.DEFAULT_USER_AGENT}
         with requests.get(url, stream=True, allow_redirects=True, headers=headers, timeout=60) as r:
             r.raise_for_status()
             total_size = int(r.headers.get('content-length', 0))

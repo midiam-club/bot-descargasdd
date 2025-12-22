@@ -13,13 +13,24 @@ from utils import sanitizar_nombre # <--- IMPORTANTE
 
 # --- GESTIÓN DE SESIÓN ---
 def obtener_contexto_navegador(browser):
+    """
+    Carga la sesión persistente desde /config/config.json si existe.
+    Si no, crea un contexto virgen.
+    """
     if os.path.exists(config.SESSION_FILE):
         print(f"   [SESIÓN] Cargando cookies desde: {config.SESSION_FILE}")
         try:
-            return browser.new_context(storage_state=config.SESSION_FILE)
-        except:
-            return browser.new_context()
-    return browser.new_context()
+            # Intentamos cargar la sesión
+            context = browser.new_context(storage_state=config.SESSION_FILE)
+            return context
+        except Exception as e:
+            print(f"   [!] Error cargando sesión (fichero corrupto): {e}")
+            # SI FALLA, creamos uno nuevo con el User-Agent correcto
+            return browser.new_context(user_agent=config.DEFAULT_USER_AGENT)
+    else:
+        print("   [SESIÓN] No existe fichero previo. Se creará uno nuevo.")
+        # SI NO EXISTE, creamos uno nuevo con el User-Agent correcto
+        return browser.new_context(user_agent=config.DEFAULT_USER_AGENT)
 
 def guardar_sesion(context):
     try: context.storage_state(path=config.SESSION_FILE)

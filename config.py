@@ -159,3 +159,7 @@ PALABRAS_EXCLUIDAS = ["REMUX", "FULLUHD", "ISO", "720P", "CANAL TELEGRAM", "LIST
 # --- INTERVALO DE COMPROBACIÓN ---
 # Tiempo en segundos que el bot duerme entre escaneos (Por defecto: 10 minutos)
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))
+
+# --- CONFIGURACIÓN DE IDENTIDAD ---
+# User-Agent moderno (Chrome 123 en Windows 10) para parecer un humano real
+DEFAULT_USER_AGENT = os.getenv("USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")

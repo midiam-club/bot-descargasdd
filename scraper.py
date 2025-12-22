@@ -102,9 +102,11 @@ def procesar_detalle_hilo(page, url_hilo):
 def ejecutar_scraping_completo(conn):
     cookies, ua = obtener_cookies_flaresolverr("https://descargasdd.org/index.php")
     
+    user_agent_final = ua if ua else config.DEFAULT_USER_AGENT
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent=ua if ua else "Mozilla/5.0")
+        context = browser.new_context(user_agent=user_agent_final)
         if cookies:
             context.add_cookies([{"name": c["name"], "value": c["value"], "domain": c["domain"].lstrip('.'), "path": c["path"], "secure": True} for c in cookies])
             
