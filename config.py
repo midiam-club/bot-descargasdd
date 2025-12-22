@@ -12,21 +12,19 @@ except:
 load_dotenv()
 
 # --- DIRECTORIOS ---
-# Si estamos en Docker, usará /config. Si estamos probando en Windows/Local, usa la carpeta actual.
-CONFIG_DIR = os.getenv("CONFIG_DIR", "/config")
+# --- PERSISTENCIA DE SESIÓN ---
+# Definimos la carpeta persistente (dentro del contenedor suele ser /config)
+CONFIG_DIR = "/config"
 
-# Aseguramos que existe (por si acaso)
+# Si no existe (ej: entorno local Windows), usamos una carpeta 'config' local
 if not os.path.exists(CONFIG_DIR):
-    # Fallback inteligente: si /config no existe (ej: entorno local), usar directorio actual
-    if CONFIG_DIR == "/config":
-        CONFIG_DIR = os.getcwd()
-    else:
-        try: os.makedirs(CONFIG_DIR)
-        except: pass
+    CONFIG_DIR = os.path.join(os.getcwd(), "config")
+    if not os.path.exists(CONFIG_DIR):
+        os.makedirs(CONFIG_DIR)
 
 # --- RUTAS DE ARCHIVOS PERSISTENTES ---
-# Aquí es donde ocurre la magia: guardamos la sesión en la carpeta persistente
-SESSION_FILE = os.path.join(CONFIG_DIR, "sesion.json")
+# Ruta absoluta al archivo de sesión
+SESSION_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 # Credenciales Foro
 FORO_USER = os.getenv("FORO_USER")

@@ -2,3 +2,7 @@ playwright
 psycopg2-binary
 requests
 python-dotenv
+fastapi
+uvicorn
+jinja2
+websockets

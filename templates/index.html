@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Descargas - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-900 text-white font-sans" x-data="downloader()">
+
+    <div class="container mx-auto p-6">
+        <header class="mb-8 flex justify-between items-center border-b border-gray-700 pb-4">
+            <h1 class="text-3xl font-bold text-blue-400">Panel de Control</h1>
+            <div class="text-right">
+                <p class="text-sm text-gray-400">Ancho de Banda Total</p>
+                <p class="text-4xl font-mono text-green-400">
+                    <span x-text="totalSpeed">0.0</span> MB/s
+                </p>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <div class="lg:col-span-2 space-y-6">
+                <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+                    <span>⬇️</span> Descargas en Curso
+                </h2>
+
+                <div x-show="Object.keys(downloads).length === 0" class="bg-gray-800 p-6 rounded-lg text-center text-gray-500">
+                    No hay descargas activas en este momento. El bot está durmiendo. zzz
+                </div>
+
+                <template x-for="(files, peli) in downloads" :key="peli">
+                    <div class="bg-gray-800 rounded-lg p-5 shadow-lg border border-gray-700">
+                        <h3 class="text-lg font-bold text-yellow-400 mb-3" x-text="peli"></h3>
+                        
+                        <div class="space-y-4">
+                            <template x-for="(data, filename) in files" :key="filename">
+                                <div class="bg-gray-900/50 p-3 rounded border border-gray-700">
+                                    <div class="flex justify-between text-sm mb-1">
+                                        <span class="font-mono text-blue-200" x-text="filename"></span>
+                                        <span class="text-green-300" x-text="data.speed + ' MB/s'"></span>
+                                    </div>
+                                    
+                                    <div class="w-full bg-gray-700 rounded-full h-4 relative overflow-hidden">
+                                        <div class="bg-blue-500 h-4 rounded-full transition-all duration-500 ease-out flex items-center justify-center text-xs font-bold text-white shadow"
+                                             :style="`width: ${data.progress}%`">
+                                        </div>
+                                        <div class="absolute inset-0 flex items-center justify-center text-xs font-bold text-white drop-shadow-md">
+                                            <span x-text="data.progress + '%'"></span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                        <span x-text="data.downloaded + ' MB descargados'"></span>
+                                        <span x-text="'Total: ' + data.total + ' MB'"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <div class="lg:col-span-1">
+                <div class="bg-gray-800 p-5 rounded-lg border border-gray-700 sticky top-6">
+                    <h2 class="text-xl font-semibold mb-4">📈 Histórico Velocidad</h2>
+                    <div class="h-64">
+                        <canvas id="speedChart"></canvas>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-4 text-center">Actualizado en tiempo real (1s)</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('downloader', () => ({
+                downloads: {},
+                totalSpeed: 0,
+                chart: null,
+
+                init() {
+                    this.initChart();
+                    // Polling cada 1 segundo
+                    setInterval(() => this.fetchData(), 1000);
+                },
+
+                async fetchData() {
+                    try {
+                        const res = await fetch('/api/status');
+                        const data = await res.json();
+                        this.downloads = data.downloads;
+                        this.totalSpeed = data.total_speed.toFixed(2);
+                        this.updateChart(this.totalSpeed);
+                    } catch (e) {
+                        console.error("Error conectando al backend", e);
+                    }
+                },
+
+                initChart() {
+                    const ctx = document.getElementById('speedChart').getContext('2d');
+                    this.chart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: Array(30).fill(''), // 30 segundos de historial
+                            datasets: [{
+                                label: 'MB/s',
+                                data: Array(30).fill(0),
+                                borderColor: '#4ade80', // green-400
+                                backgroundColor: 'rgba(74, 222, 128, 0.2)',
+                                borderWidth: 2,
+                                tension: 0.4,
+                                fill: true,
+                                pointRadius: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            animation: false,
+                            scales: {
+                                y: { beginAtZero: true, grid: { color: '#374151' } },
+                                x: { display: false }
+                            },
+                            plugins: { legend: { display: false } }
+                        }
+                    });
+                },
+
+                updateChart(val) {
+                    if (!this.chart) return;
+                    const data = this.chart.data.datasets[0].data;
+                    data.shift(); // Quitar el viejo
+                    data.push(val); // Meter el nuevo
+                    this.chart.update();
+                }
+            }))
+        });
+    </script>
+</body>
+</html>

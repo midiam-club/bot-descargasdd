@@ -1,10 +1,10 @@
 import os
 import time
 import requests
-import re
 from urllib.parse import unquote
 import config
 from utils import debe_aplicar_limite
+from monitor import state  # <--- Importamos el monitor para el panel web
 
 # --- FUNCIONES DE SOPORTE ---
 
@@ -41,7 +41,6 @@ def unrestrict_rd(link):
         
         if r.status_code == 200:
             data = r.json()
-            # Retornamos URL de descarga y el nombre del fichero detectado por RD
             return data.get("download"), data.get("filename")
         elif r.status_code == 503:
             print("   [API] Real-Debrid en mantenimiento.")
@@ -63,7 +62,6 @@ def unrestrict_dl(link):
         if r.status_code == 200:
             res = r.json()
             if res.get("success"):
-                # DL devuelve una lista, cogemos el primer elemento
                 val = res["value"][0]
                 return val.get("downloadUrl"), val.get("name")
             else:
@@ -76,47 +74,38 @@ def unrestrict_dl(link):
 
 def obtener_enlace_premium(link):
     """
-    Orquestador principal: Decide qué servicio usar, lo intenta, 
-    y si falla prueba el otro (Fallback).
+    Orquestador principal: Decide qué servicio usar con Fallback.
     Devuelve: (url_descarga, nombre_archivo)
     """
     servicio_preferido = determinar_debrid(link)
     
-    # 1. Intento Principal
+    # Intento Principal
     if servicio_preferido == "RD":
         url, name = unrestrict_rd(link)
         if url: return url, name
-        # Si falla y tenemos DL configurado, probamos fallback
-        if config.DL_TOKEN:
+        if config.DL_TOKEN: # Fallback
             print("   [INFO] Falló RD. Probando fallback con Debrid-Link...")
             return unrestrict_dl(link)
             
     elif servicio_preferido == "DL":
         url, name = unrestrict_dl(link)
         if url: return url, name
-        # Si falla y tenemos RD configurado, probamos fallback
-        if config.RD_TOKEN:
+        if config.RD_TOKEN: # Fallback
             print("   [INFO] Falló DL. Probando fallback con Real-Debrid...")
             return unrestrict_rd(link)
             
     return None, None
 
-# --- FUNCIÓN DE DESCARGA (Con Limitador) ---
+# --- FUNCIÓN DE DESCARGA (Integrada con Monitor y Limitador) ---
 
 def descargar_archivo(url, carpeta_destino, titulo_referencia):
-    """
-    Descarga el archivo a la carpeta destino aplicando limitador de velocidad
-    si corresponde según hora y configuración.
-    """
     if not os.path.exists(carpeta_destino):
         os.makedirs(carpeta_destino)
         
-    # Nombre temporal basado en la URL final premium
     nombre_archivo = obtener_nombre_archivo_de_url(url)
     ruta_temp = os.path.join(carpeta_destino, nombre_archivo + ".part")
     ruta_final = os.path.join(carpeta_destino, nombre_archivo)
     
-    # Si ya existe el final, asumimos descargado
     if os.path.exists(ruta_final):
         print(f"   [SKIP] Archivo ya existe: {nombre_archivo}")
         return ruta_final
@@ -125,7 +114,6 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
     
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        # stream=True es vital para descargas grandes y control de velocidad
         with requests.get(url, stream=True, allow_redirects=True, headers=headers, timeout=60) as r:
             r.raise_for_status()
             total_size = int(r.headers.get('content-length', 0))
@@ -140,38 +128,7 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
                         f.write(chunk)
                         descargado += len(chunk)
                         
-                        # --- LÓGICA DEL LIMITADOR DE VELOCIDAD ---
-                        # Solo entramos si el interruptor (ENABLE) está ON 
-                        # Y estamos en hora (debe_aplicar_limite)
-                        if config.SPEED_LIMIT_MB > 0 and debe_aplicar_limite():
-                            
-                            # Tiempo que deberíamos haber tardado para respetar el límite
-                            # Ejemplo: 1MB / 5MBs = 0.2 segundos
-                            tiempo_esperado = len(chunk) / (config.SPEED_LIMIT_MB * 1024 * 1024)
-                            
-                            # Tiempo que hemos tardado realmente (CPU + Red)
-                            tiempo_real = time.time() - start_time
-                            
-                            # Si hemos ido muy rápido (real < esperado), dormimos la diferencia
-                            sleep_time = tiempo_esperado - tiempo_real
-                            if sleep_time > 0:
-                                time.sleep(sleep_time)
-                            
-                            # Reseteamos el reloj para medir el siguiente bloque limpiamente
-                            start_time = time.time()
-                        else:
-                            # Si no hay límite, actualizamos start_time para que el cálculo 
-                            # no acumule errores si de repente entra el límite luego.
-                            start_time = time.time()
-
-        # Al finalizar, renombramos quitando el .part
-        os.rename(ruta_temp, ruta_final)
-        print(f"   [OK] Descarga completada: {nombre_archivo}")
-        return ruta_final
-
-    except Exception as e:
-        print(f"   [ERROR] Fallo en descarga de {nombre_archivo}: {e}")
-        if os.path.exists(ruta_temp):
-            try: os.remove(ruta_temp)
-            except: pass
-        return None
+                        # --- 1. MONITORIZACIÓN WEB ---
+                        current_time = time.time()
+                        elapsed = current_time - start_time
+                        speed_mb = 0.

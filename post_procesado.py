@@ -19,34 +19,22 @@ def extraer_fuente_del_titulo(titulo_original):
     return "WebDL"
 
 def extraer_resolucion_del_texto(titulo_original, formato_foro):
-    """
-    Determina la resolución basándose SOLO en el nombre del archivo/hilo
-    o en la categoría del foro. Prioridad: Texto > Foro.
-    """
     t = titulo_original.upper()
     f = formato_foro.upper()
     
-    # 1. Búsqueda explícita en el título
     if "2160P" in t or "4K" in t or "UHD" in t: return "2160p"
-    
-    # [CAMBIO] Prioridad para m1080p/MicroHD antes que 1080p normal
     if "M1080P" in t or "MICRO" in t: return "m1080p"
-    
     if "1080P" in t or "FULLHD" in t or "FHD" in t: return "1080p"
     if "720P" in t or "HD" in t: return "720p"
     
-    # 2. Fallback: Lo que nos dijo el scraper (formato_foro)
     if "2160" in f or "4K" in f: return "2160p"
-    
-    # [CAMBIO] Fallback también para m1080p
     if "M1080" in f or "MICRO" in f: return "m1080p"
-    
     if "1080" in f: return "1080p"
     if "720" in f: return "720p"
     
-    return "1080p" # Valor por defecto
+    return "1080p"
 
-# --- 2. DATOS TÉCNICOS (Solo Codec y Bits) ---
+# --- 2. DATOS TÉCNICOS ---
 
 def obtener_datos_tecnicos(filepath):
     try:
@@ -63,7 +51,47 @@ def obtener_datos_tecnicos(filepath):
     except: pass
     return {}
 
-# --- 3. UTILIDADES DE SISTEMA ---
+# --- 3. GESTIÓN INTELIGENTE DE COMPRIMIDOS ---
+
+def encontrar_archivo_cabecera(carpeta):
+    """
+    Busca el archivo 'maestro' que inicia la descompresión.
+    Prioridad: part01.rar > .001 > .rar (simple) > .zip
+    """
+    archivos = os.listdir(carpeta)
+    archivos.sort() # Ordenar para asegurar que part01 salga antes que part02
+    
+    candidato = None
+    
+    for f in archivos:
+        lf = f.lower()
+        
+        # 1. Prioridad Máxima: Archivos explícitos "part1" o "part01"
+        # Ejemplo: peli.part01.rar, peli.part1.rar
+        if ".part" in lf and ".rar" in lf:
+            if "part1." in lf or "part01." in lf or "part001." in lf:
+                return f # Encontrado el líder indiscutible
+            continue # Si es part02, part03... lo ignoramos
+            
+        # 2. Archivos divididos numéricos (.001)
+        if lf.endswith(".001"):
+            return f
+            
+        # 3. Archivos RAR estándar (Cuidado con no coger subs o partes .r00)
+        if lf.endswith(".rar"):
+            # Si no tiene "part" en el nombre, podría ser un RAR único o un .rar de un set antiguo
+            # Nos lo guardamos como candidato si no encontramos nada mejor
+            if "part" not in lf:
+                candidato = f
+
+        # 4. Archivos ZIP
+        if lf.endswith(".zip"):
+             if "part" not in lf or ("part1" in lf or "part01" in lf):
+                 candidato = f
+
+    return candidato
+
+# --- 4. UTILIDADES DE SISTEMA ---
 
 def fijar_permisos(ruta_archivo):
     try:
@@ -78,26 +106,20 @@ def renombrar_archivo_final(ruta_archivo, titulo_peli, formato_foro, titulo_orig
         directorio = os.path.dirname(ruta_archivo)
         ext = os.path.splitext(ruta_archivo)[1]
         
-        # A. Limpieza de Título y Año
         match_anio = re.search(r'\((\d{4})\)', titulo_peli)
         anio_str = f"({match_anio.group(1)})" if match_anio else ""
         titulo_solo = titulo_peli.replace(anio_str, "").strip()
 
-        # B. Obtención de datos
         source = extraer_fuente_del_titulo(titulo_original)
         resolucion = extraer_resolucion_del_texto(titulo_original, formato_foro)
         tech = obtener_datos_tecnicos(ruta_archivo)
         
-        # C. Lógica de Codec (HEVC vs AVC)
         codec_raw = tech.get("codec", "").upper()
-        # Si el título dice x265 o el archivo es HEVC -> HEVC
         es_x265 = "HEVC" in codec_raw or "X265" in titulo_original.upper()
         codec_str = "HEVC" if es_x265 else "AVC"
         
-        # D. Bits (Solo si es 10 o 12)
         bits_str = f"{tech.get('bits')}bit" if tech.get("bits") in ["10", "12"] else ""
         
-        # E. Construcción: [Fuente] [Resolución] [Codec] [Bits]
         tags = [t for t in [source, resolucion, codec_str, bits_str] if t]
         etiquetas = " ".join(tags)
         
@@ -117,45 +139,54 @@ def renombrar_archivo_final(ruta_archivo, titulo_peli, formato_foro, titulo_orig
         return ruta_archivo
 
 def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_original):
-    archivos = os.listdir(carpeta_destino)
-    archivo_comprimido = None
+    # 1. Búsqueda de VIDEO existente (por si ya se extrajo o no estaba comprimido)
     archivo_video = None
-    
-    # Detección
-    for f in archivos:
+    for f in os.listdir(carpeta_destino):
         lf = f.lower()
-        if (lf.endswith(".rar") or lf.endswith(".zip") or lf.endswith(".7z") or lf.endswith(".001")):
-            if "part" in lf and "part1" not in lf and "part01" not in lf and ".part" not in lf: continue
-            archivo_comprimido = f
-        if lf.endswith(".mkv") or lf.endswith(".mp4") or lf.endswith(".avi"):
+        if lf.endswith((".mkv", ".mp4", ".avi")):
             archivo_video = f
+            break
 
-    # Extracción
-    se_ha_extraido = False
-    if archivo_comprimido and not archivo_video:
-        print(f"      [EXTRAER] {archivo_comprimido}")
-        ruta_rar = os.path.join(carpeta_destino, archivo_comprimido)
-        subprocess.run(["7z", "x", ruta_rar, f"-o{carpeta_destino}", "-y"], stdout=subprocess.DEVNULL)
-        se_ha_extraido = True
+    # 2. Búsqueda y Extracción INTELIGENTE
+    if not archivo_video:
+        archivo_cabecera = encontrar_archivo_cabecera(carpeta_destino)
         
-        # Refrescar búsqueda de video
-        for f in os.listdir(carpeta_destino):
-             if f.lower().endswith(".mkv") or f.lower().endswith(".mp4"):
-                 archivo_video = f
-                 break
+        if archivo_cabecera:
+            print(f"      [EXTRAER] Detectado archivo maestro: {archivo_cabecera}")
+            ruta_rar = os.path.join(carpeta_destino, archivo_cabecera)
+            
+            # Usamos subprocess.run sin ocultar errores críticos para debug,
+            # pero mantenemos stdout limpio.
+            try:
+                subprocess.run(["7z", "x", ruta_rar, f"-o{carpeta_destino}", "-y"], 
+                               check=True, stdout=subprocess.DEVNULL)
+                print("      [OK] Descompresión finalizada correctamente.")
+            except subprocess.CalledProcessError:
+                print("      [ERROR] Falló la descompresión. El archivo puede estar corrupto.")
+                return False
 
-    # Limpieza de comprimidos
-    if se_ha_extraido or archivo_comprimido:
-        patrones_basura = ["*.rar", "*.zip", "*.7z", "*.r??", "*.part*", "*.001", "*.iso"]
-        print("      [LIMPIEZA] Borrando archivos comprimidos...")
+            # Refrescar búsqueda de video tras extraer
+            for f in os.listdir(carpeta_destino):
+                 if f.lower().endswith((".mkv", ".mp4", ".avi")):
+                     archivo_video = f
+                     break
+        else:
+            # No hay video ni comprimidos reconocibles
+            pass
+
+    # 3. Limpieza de comprimidos (Solo si tenemos video final)
+    if archivo_video:
+        patrones_basura = ["*.rar", "*.zip", "*.7z", "*.r??", "*.part*", "*.001", "*.iso", "*.z??"]
+        print("      [LIMPIEZA] Borrando archivos comprimidos y basura...")
         for pat in patrones_basura:
             for f_basura in glob.glob(os.path.join(carpeta_destino, pat)):
                 try: os.remove(f_basura)
                 except: pass
-
-    # Renombrado
-    if archivo_video:
+        
+        # Renombrado Final
         ruta_video = os.path.join(carpeta_destino, archivo_video)
         return renombrar_archivo_final(ruta_video, titulo_peli, formato_res, titulo_original)
+    else:
+        print("      [!] No se encontró archivo de video válido tras el procesado.")
         
     return False
