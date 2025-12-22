@@ -4,6 +4,17 @@ from config import DB_CONFIG
 def get_connection():
     return psycopg2.connect(**DB_CONFIG)
 
+# --- FUNCIÓN "DUMMY" PARA EVITAR EL CRASH ---
+def init_db():
+    """
+    Función vacía para satisfacer la llamada en main.py.
+    No crea tablas ni altera la base de datos existente.
+    """
+    print("[DB] Modo: Tablas existentes. Omitiendo inicialización.")
+    pass 
+
+# --- FUNCIONES DE GESTIÓN ---
+
 def buscar_pelicula_meta(cur, titulo_limpio):
     cur.execute("SELECT id FROM peliculas_meta WHERE LOWER(titulo_base)=LOWER(%s)", (titulo_limpio,))
     return cur.fetchone()
@@ -35,7 +46,6 @@ def actualizar_enlaces(conn, cur, hilo_id, enlaces):
     except: conn.rollback()
 
 def marcar_como_descargado(did):
-    # Esta función abre su propia conexión porque se llama desde hilos (workers)
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -58,29 +68,17 @@ def obtener_pendientes(cur):
     return cur.fetchall()
 
 def marcar_cascada_descargado(pid, formato_descargado):
-    """
-    Marca como descargado el formato actual Y las versiones inferiores
-    para evitar duplicados, según la jerarquía de calidad.
-    """
     try:
         conn = get_connection()
         cur = conn.cursor()
         
         target_formats = [formato_descargado]
         
-        # Jerarquía de anulación
-        # Si bajo x265, ya no quiero ni 1080p normal ni micro
         if formato_descargado == "x265":
             target_formats.extend(["1080p", "m1080p"])
-            
-        # Si bajo 1080p, ya no quiero micro
         elif formato_descargado == "1080p":
             target_formats.extend(["m1080p"])
             
-        # Nota: 2160p y m1080p solo se anulan a sí mismos (ya añadido en target_formats)
-
-        # Ejecutamos la actualización masiva para esta película
-        # Usamos ANY para pasar la lista de formatos
         cur.execute("""
             UPDATE descargas 
             SET descargado = TRUE 
@@ -88,13 +86,9 @@ def marcar_cascada_descargado(pid, formato_descargado):
         """, (pid, target_formats))
         
         conn.commit()
-        count = cur.rowcount
         cur.close()
         conn.close()
-        
-        print(f"      [DB] Actualizados {count} registros (Cascada para {formato_descargado})")
         return True
-        
     except Exception as e:
         print(f"[DB Error] Cascada fallida: {e}")
         return False
