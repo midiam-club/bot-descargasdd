@@ -4,7 +4,9 @@ import subprocess
 import json
 import glob
 from config import PUID, PGID, RAR_PASSWORD
-from utils import sanitizar_nombre # <--- IMPORTANTE
+from utils import sanitizar_nombre 
+
+# --- 1. EXTRACCIÓN BASADA EN TEXTO ---
 
 def extraer_fuente_del_titulo(titulo_original):
     patrones = [r"BDRip", r"BRRip", r"BluRay", r"Bluray", r"Web-?DL", r"WEBDL", r"HDTV", r"UHD", r"FullUHD"]
@@ -29,6 +31,8 @@ def extraer_resolucion_del_texto(titulo_original, formato_foro):
     if "1080" in f: return "1080p"
     return "1080p"
 
+# --- 2. DATOS TÉCNICOS ---
+
 def obtener_datos_tecnicos(filepath):
     try:
         cmd = ["mediainfo", "--Output=JSON", filepath]
@@ -43,6 +47,8 @@ def obtener_datos_tecnicos(filepath):
     except: pass
     return {}
 
+# --- 3. GESTIÓN DE COMPRIMIDOS ---
+
 def normalizar_nombres_rar(carpeta):
     print("      [NORMALIZAR] Estandarizando nombres de archivos...")
     archivos = os.listdir(carpeta)
@@ -53,10 +59,8 @@ def normalizar_nombres_rar(carpeta):
                 nuevo_nombre = f.lower()
                 if f != nuevo_nombre:
                     path_new = os.path.join(carpeta, nuevo_nombre)
-                    try:
-                        os.rename(path_old, path_new)
-                    except Exception as e:
-                        print(f"      [!] No se pudo renombrar {f}: {e}")
+                    try: os.rename(path_old, path_new)
+                    except Exception as e: print(f"      [!] No se pudo renombrar {f}: {e}")
 
 def encontrar_archivo_cabecera(carpeta):
     archivos = sorted(os.listdir(carpeta))
@@ -86,15 +90,33 @@ def renombrar_archivo_final(ruta_archivo, titulo_peli, formato_foro, titulo_orig
         resolucion = extraer_resolucion_del_texto(titulo_original, formato_foro)
         tech = obtener_datos_tecnicos(ruta_archivo)
         
+        # Datos del codec
         codec_raw = tech.get("codec", "").upper()
         es_x265 = "HEVC" in codec_raw or "X265" in titulo_original.upper()
         codec_str = "HEVC" if es_x265 else "AVC"
         bits_str = f"{tech.get('bits')}bit" if tech.get("bits") in ["10", "12"] else ""
         
+        # --- NUEVA LÓGICA: CRITERIO DE TAMAÑO PARA x265 1080p ---
+        if es_x265 and ("1080" in resolucion or resolucion == "m1080p"):
+            try:
+                tamanho_bytes = os.path.getsize(ruta_archivo)
+                tamanho_gb = tamanho_bytes / (1024 * 1024 * 1024) # Convertir a GB
+                
+                # UMBRAL: 6.5 GB
+                if tamanho_gb >= 6.5:
+                    resolucion = "1080p"
+                else:
+                    resolucion = "m1080p"
+                    
+                print(f"      [INFO] Archivo x265 de {tamanho_gb:.2f} GB -> Clasificado como {resolucion}")
+            except:
+                pass # Si falla al leer tamaño, mantenemos la resolución original
+        # ---------------------------------------------------------
+
         tags = [t for t in [source, resolucion, codec_str, bits_str] if t]
         etiquetas = " ".join(tags)
         
-        # --- USAMOS LA FUNCIÓN CENTRALIZADA ---
+        # Usamos sanitizar_nombre desde utils para asegurar compatibilidad Windows
         nombre_base_limpio = sanitizar_nombre(titulo_solo)
         
         nuevo_nombre = f"{nombre_base_limpio} {anio_str} [{etiquetas}]{ext}"

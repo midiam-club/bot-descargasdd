@@ -69,29 +69,46 @@
                 <div x-show="Object.keys(downloads).length === 0" class="bg-gray-800 p-8 rounded-lg text-center border border-gray-700 border-dashed">
                     <p class="text-gray-500">Esperando tareas...</p>
                 </div>
+
                 <template x-for="(files, peli) in downloads" :key="peli">
-                    <div class="bg-gray-800 rounded-lg p-5 shadow-lg border border-gray-700">
-                        <h3 class="text-lg font-bold text-yellow-400 mb-3 truncate" x-text="peli"></h3>
-                        <div class="space-y-4">
+                    <div class="bg-gray-800 rounded-lg p-5 shadow-lg border border-gray-700 relative overflow-hidden"
+                         x-data="{ stats: getMovieStats(files) }"> <div class="flex justify-between items-end mb-2 relative z-10">
+                            <h3 class="text-lg font-bold text-yellow-400 truncate w-3/4" x-text="peli"></h3>
+                            <div class="text-right">
+                                <span class="text-sm font-mono text-purple-300" x-text="stats.speed + ' MB/s'"></span>
+                            </div>
+                        </div>
+
+                        <div class="mb-6 relative z-10">
+                            <div class="flex justify-between text-xs text-gray-400 mb-1">
+                                <span class="uppercase tracking-wider font-semibold text-purple-400">Progreso Total</span>
+                                <span x-text="stats.downloaded + ' / ' + stats.total + ' MB (' + stats.pct + '%)'"></span>
+                            </div>
+                            <div class="w-full bg-gray-900 rounded-full h-3 relative overflow-hidden border border-gray-600">
+                                <div class="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(147,51,234,0.5)]"
+                                     :style="`width: ${stats.pct}%`">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="space-y-3 pl-2 border-l-2 border-gray-700 relative z-10">
                             <template x-for="(data, filename) in files" :key="filename">
-                                <div class="bg-gray-900/50 p-3 rounded border border-gray-700">
-                                    <div class="flex justify-between text-sm mb-1">
+                                <div class="bg-gray-900/40 p-2 rounded border border-gray-700/50">
+                                    <div class="flex justify-between text-xs mb-1">
                                         <span class="font-mono text-blue-200 truncate w-2/3" x-text="filename"></span>
-                                        <span class="text-green-300 font-bold" x-text="data.speed + ' MB/s'"></span>
+                                        <span class="text-green-300" x-text="data.speed + ' MB/s'"></span>
                                     </div>
-                                    <div class="w-full bg-gray-700 rounded-full h-4 relative overflow-hidden">
-                                        <div class="bg-blue-500 h-4 rounded-full transition-all duration-500 ease-out flex items-center justify-center"
+                                    <div class="w-full bg-gray-700 rounded-full h-1.5 relative overflow-hidden">
+                                        <div class="bg-blue-500 h-1.5 rounded-full transition-all duration-500 ease-out"
                                              :style="`width: ${data.progress}%`"></div>
-                                        <div class="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white drop-shadow-md">
-                                            <span x-text="data.progress + '%'"></span>
-                                        </div>
                                     </div>
-                                    <div class="flex justify-between text-xs text-gray-500 mt-1">
-                                        <span x-text="data.downloaded + ' MB / ' + data.total + ' MB'"></span>
+                                    <div class="flex justify-end mt-0.5">
+                                        <span class="text-[10px] text-gray-500" x-text="data.progress + '%'"></span>
                                     </div>
                                 </div>
                             </template>
                         </div>
+
                     </div>
                 </template>
             </div>
@@ -164,6 +181,29 @@
                     setInterval(() => this.fetchData(), 1000);
                 },
 
+                // --- NUEVA FUNCIÓN: CALCULA TOTALES POR PELÍCULA ---
+                getMovieStats(files) {
+                    let totalDownloaded = 0;
+                    let totalSize = 0;
+                    let totalSpeed = 0;
+                    
+                    // Iteramos sobre los ficheros (part1.rar, part2.rar...)
+                    Object.values(files).forEach(f => {
+                        totalDownloaded += f.downloaded;
+                        totalSize += f.total;
+                        totalSpeed += f.speed;
+                    });
+
+                    let percent = totalSize > 0 ? (totalDownloaded / totalSize) * 100 : 0;
+                    
+                    return {
+                        pct: percent.toFixed(1),
+                        downloaded: totalDownloaded.toFixed(1), // MB
+                        total: totalSize.toFixed(1),            // MB
+                        speed: totalSpeed.toFixed(1)            // MB/s
+                    };
+                },
+
                 async fetchData() {
                     try {
                         const res = await fetch('/api/status');
@@ -172,7 +212,6 @@
                         this.history = data.history;
                         this.totalSpeed = data.total_speed.toFixed(2);
                         
-                        // Sincronizar datos del server (excepto inputs activos)
                         if (document.activeElement.type !== 'number') {
                              this.settings.limit = data.config.limit_value;
                         }
