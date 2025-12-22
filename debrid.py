@@ -1,47 +1,38 @@
-import os
 import time
 import requests
-from urllib.parse import unquote
+import os
 import config
-from utils import debe_aplicar_limite
-from monitor import state  # <--- Importamos el monitor para el panel web
-
-# --- FUNCIONES DE SOPORTE ---
+from urllib.parse import unquote
+from utils import debe_aplicar_limite, sanitizar_nombre # <--- IMPORTANTE
+from monitor import state 
 
 def determinar_debrid(enlace):
-    """
-    Decide si usar Real-Debrid (RD) o DebridLink (DL) basándose en 
-    la configuración de HOSTER_PREFS en config.py.
-    """
     for dominio, servicio in config.HOSTER_PREFS.items():
         if dominio in enlace.lower():
             return servicio
-    return "RD" # Por defecto intentamos RD si no está en la lista
+    return "RD"
 
 def obtener_nombre_archivo_de_url(url):
-    """Intenta extraer el nombre del archivo de la URL"""
     try:
         path = unquote(url.split("?")[0])
         nombre = os.path.basename(path)
         if nombre and "." in nombre:
-            return nombre
+            # SANITIZAMOS AQUÍ TAMBIÉN POR SI ACASO
+            return sanitizar_nombre(nombre)
     except: pass
     return "archivo_desconocido.dat"
 
-# --- FUNCIONES API (Devuelven Tupla: URL, Nombre) ---
-
 def unrestrict_rd(link):
-    """Desbloquea enlace con Real-Debrid"""
     if not config.RD_TOKEN: return None, None
     print(f"   [API] Solicitando a Real-Debrid: {link[:40]}...")
     try:
         url = "https://api.real-debrid.com/rest/1.0/unrestrict/link"
         headers = {"Authorization": f"Bearer {config.RD_TOKEN}"}
         r = requests.post(url, headers=headers, data={"link": link}, timeout=30)
-        
         if r.status_code == 200:
             data = r.json()
-            return data.get("download"), data.get("filename")
+            # SANITIZAMOS EL NOMBRE QUE DEVUELVE LA API
+            return data.get("download"), sanitizar_nombre(data.get("filename"))
         elif r.status_code == 503:
             print("   [API] Real-Debrid en mantenimiento.")
         else:
@@ -51,19 +42,18 @@ def unrestrict_rd(link):
     return None, None
 
 def unrestrict_dl(link):
-    """Desbloquea enlace con Debrid-Link"""
     if not config.DL_TOKEN: return None, None
     print(f"   [API] Solicitando a Debrid-Link: {link[:40]}...")
     try:
         url = "https://debrid-link.com/api/v2/downloader/add"
         headers = {"Authorization": f"Bearer {config.DL_TOKEN}"}
         r = requests.post(url, headers=headers, data={"url": link}, timeout=30)
-        
         if r.status_code == 200:
             res = r.json()
             if res.get("success"):
                 val = res["value"][0]
-                return val.get("downloadUrl"), val.get("name")
+                # SANITIZAMOS EL NOMBRE QUE DEVUELVE LA API
+                return val.get("downloadUrl"), sanitizar_nombre(val.get("name"))
             else:
                 print(f"   [API] Error DL: {res.get('error')}")
         else:
@@ -73,36 +63,26 @@ def unrestrict_dl(link):
     return None, None
 
 def obtener_enlace_premium(link):
-    """
-    Orquestador principal: Decide qué servicio usar con Fallback.
-    Devuelve: (url_descarga, nombre_archivo)
-    """
     servicio_preferido = determinar_debrid(link)
-    
-    # Intento Principal
     if servicio_preferido == "RD":
         url, name = unrestrict_rd(link)
         if url: return url, name
-        if config.DL_TOKEN: # Fallback
-            print("   [INFO] Falló RD. Probando fallback con Debrid-Link...")
+        if config.DL_TOKEN:
             return unrestrict_dl(link)
-            
     elif servicio_preferido == "DL":
         url, name = unrestrict_dl(link)
         if url: return url, name
-        if config.RD_TOKEN: # Fallback
-            print("   [INFO] Falló DL. Probando fallback con Real-Debrid...")
+        if config.RD_TOKEN:
             return unrestrict_rd(link)
-            
     return None, None
-
-# --- FUNCIÓN DE DESCARGA (Integrada con Monitor y Limitador) ---
 
 def descargar_archivo(url, carpeta_destino, titulo_referencia):
     if not os.path.exists(carpeta_destino):
         os.makedirs(carpeta_destino)
         
     nombre_archivo = obtener_nombre_archivo_de_url(url)
+    # NOMBRE SANITIZADO GARANTIZADO AQUÍ
+    
     ruta_temp = os.path.join(carpeta_destino, nombre_archivo + ".part")
     ruta_final = os.path.join(carpeta_destino, nombre_archivo)
     
@@ -121,40 +101,40 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
             with open(ruta_temp, 'wb') as f:
                 start_time = time.time()
                 descargado = 0
-                chunk_size = 1024 * 1024 # 1 MB buffer
+                chunk_size = 1024 * 1024 
                 
                 for chunk in r.iter_content(chunk_size=chunk_size):
                     if chunk:
                         f.write(chunk)
                         descargado += len(chunk)
                         
-                        # --- 1. MONITORIZACIÓN WEB ---
                         current_time = time.time()
                         elapsed = current_time - start_time
                         speed_mb = 0.0
                         if elapsed > 0:
                             speed_mb = (descargado / (1024 * 1024)) / elapsed
                         
-                        # Actualizamos el estado global para el Dashboard
                         state.update_download(titulo_referencia, nombre_archivo, descargado, total_size, speed_mb)
 
-                        # --- 2. LIMITADOR DE VELOCIDAD (HORARIO) ---
-                        if config.SPEED_LIMIT_MB > 0 and debe_aplicar_limite():
-                            # Si vamos más rápido que el límite, dormimos un poco
-                            if speed_mb > config.SPEED_LIMIT_MB:
-                                time.sleep(0.5)
+                        if config.SPEED_LIMIT_MB > 0 and config.ENABLE_SPEED_LIMIT: 
+                             if debe_aplicar_limite():
+                                if speed_mb > config.SPEED_LIMIT_MB:
+                                    time.sleep(0.5)
 
-        # Si llegamos aquí, la descarga terminó bien
+        end_time = time.time()
+        total_time = end_time - start_time
+        avg_speed = (total_size / (1024 * 1024)) / total_time if total_time > 0 else 0
+        
+        m, s = divmod(total_time, 60)
+        h, m = divmod(m, 60)
+        duration_str = f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
+
         os.rename(ruta_temp, ruta_final)
-        
-        # Limpiamos el monitor
-        state.remove_download(titulo_referencia, nombre_archivo)
-        
+        state.finish_download(titulo_referencia, nombre_archivo, avg_speed, duration_str)
         return ruta_final
 
     except Exception as e:
         print(f"   [ERROR] Falló la descarga de {nombre_archivo}: {e}")
-        # En caso de error, limpiamos el monitor también
         state.remove_download(titulo_referencia, nombre_archivo)
         if os.path.exists(ruta_temp):
             try: os.remove(ruta_temp)

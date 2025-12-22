@@ -10,6 +10,19 @@ def extraer_hilo_id(url):
 def quitar_tildes(texto):
     return ''.join((c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn'))
 
+# --- NUEVA FUNCIÓN DE SANITIZACIÓN WINDOWS ---
+def sanitizar_nombre(texto):
+    """
+    Elimina caracteres prohibidos en Windows y sistemas de archivos NTFS/FAT32.
+    Prohibidos: < > : " / \ | ? *
+    """
+    if not texto: return "sin_titulo"
+    # Reemplazamos los prohibidos por nada o por un guion si es necesario
+    limpio = re.sub(r'[<>:"/\\|?*]', '', texto)
+    # Eliminamos espacios dobles y espacios al final/inicio
+    limpio = re.sub(r'\s+', ' ', limpio).strip()
+    return limpio
+
 def limpiar_titulo(titulo_sucio):
     try:
         match_anio = re.search(r'[\(\[\s\|](\d{4})[\)\]\s\|]', titulo_sucio)
@@ -37,28 +50,14 @@ def detectar_formato(titulo, foro_id):
     return "Desconocido"
 
 def debe_aplicar_limite():
-    """
-    Devuelve True si la hora actual está dentro del rango de limitación
-    y el interruptor maestro está activado.
-    """
-    # 1. Si el interruptor maestro está apagado, nunca limitamos
     if not config.ENABLE_SPEED_LIMIT:
         return False
-
-    # 2. Obtenemos la hora EXACTA actual
     now = datetime.now().time()
     start = config.LIMIT_START_TIME
     end = config.LIMIT_END_TIME
-    
-    # Si por error no hay horas definidas, no limitamos
     if not start or not end:
         return False
-    
-    # Caso A: Rango en el mismo día (Ej: 08:30 a 23:15)
     if start < end:
         return start <= now < end
-        
-    # Caso B: Rango cruza medianoche (Ej: 23:30 a 07:15)
     else:
-        # Es válido si estamos después del inicio (23:30...) O antes del fin (...07:15)
         return now >= start or now < end
