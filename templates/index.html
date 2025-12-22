@@ -71,22 +71,23 @@
                 </div>
 
                 <template x-for="(files, peli) in downloads" :key="peli">
-                    <div class="bg-gray-800 rounded-lg p-5 shadow-lg border border-gray-700 relative overflow-hidden"
-                         x-data="{ stats: getMovieStats(files) }"> <div class="flex justify-between items-end mb-2 relative z-10">
+                    <div class="bg-gray-800 rounded-lg p-5 shadow-lg border border-gray-700 relative overflow-hidden"> 
+                        
+                        <div class="flex justify-between items-end mb-2 relative z-10">
                             <h3 class="text-lg font-bold text-yellow-400 truncate w-3/4" x-text="peli"></h3>
                             <div class="text-right">
-                                <span class="text-sm font-mono text-purple-300" x-text="stats.speed + ' MB/s'"></span>
+                                <span class="text-sm font-mono text-purple-300" x-text="getMovieStats(files).speed + ' MB/s'"></span>
                             </div>
                         </div>
 
                         <div class="mb-6 relative z-10">
                             <div class="flex justify-between text-xs text-gray-400 mb-1">
                                 <span class="uppercase tracking-wider font-semibold text-purple-400">Progreso Total</span>
-                                <span x-text="stats.downloaded + ' / ' + stats.total + ' MB (' + stats.pct + '%)'"></span>
+                                <span x-text="getMovieStats(files).text"></span>
                             </div>
                             <div class="w-full bg-gray-900 rounded-full h-3 relative overflow-hidden border border-gray-600">
                                 <div class="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(147,51,234,0.5)]"
-                                     :style="`width: ${stats.pct}%`">
+                                     :style="`width: ${getMovieStats(files).pct}%`">
                                 </div>
                             </div>
                         </div>
@@ -172,7 +173,7 @@
             Alpine.data('downloader', () => ({
                 downloads: {},
                 history: {},
-                totalSpeed: 0,
+                totalSpeed: "0.00",
                 settings: { enabled: true, limit: 0, max_parallel: 1 },
                 chart: null,
 
@@ -181,13 +182,13 @@
                     setInterval(() => this.fetchData(), 1000);
                 },
 
-                // --- NUEVA FUNCIÓN: CALCULA TOTALES POR PELÍCULA ---
+                // Esta función ahora se llamará repetidamente en el template
                 getMovieStats(files) {
                     let totalDownloaded = 0;
                     let totalSize = 0;
                     let totalSpeed = 0;
                     
-                    // Iteramos sobre los ficheros (part1.rar, part2.rar...)
+                    // Sumamos los valores de todas las partes
                     Object.values(files).forEach(f => {
                         totalDownloaded += f.downloaded;
                         totalSize += f.total;
@@ -196,11 +197,14 @@
 
                     let percent = totalSize > 0 ? (totalDownloaded / totalSize) * 100 : 0;
                     
+                    // Devolvemos el objeto formateado
                     return {
                         pct: percent.toFixed(1),
-                        downloaded: totalDownloaded.toFixed(1), // MB
-                        total: totalSize.toFixed(1),            // MB
-                        speed: totalSpeed.toFixed(1)            // MB/s
+                        downloaded: totalDownloaded.toFixed(1),
+                        total: totalSize.toFixed(1),
+                        speed: totalSpeed.toFixed(1),
+                        // Pre-generamos el texto completo para el HTML
+                        text: `${totalDownloaded.toFixed(1)} / ${totalSize.toFixed(1)} MB (${percent.toFixed(1)}%)`
                     };
                 },
 
@@ -210,7 +214,10 @@
                         const data = await res.json();
                         this.downloads = data.downloads;
                         this.history = data.history;
-                        this.totalSpeed = data.total_speed.toFixed(2);
+                        
+                        const rawSpeed = data.total_speed; 
+                        this.totalSpeed = rawSpeed.toFixed(2); 
+                        this.updateChart(rawSpeed);
                         
                         if (document.activeElement.type !== 'number') {
                              this.settings.limit = data.config.limit_value;
@@ -218,7 +225,6 @@
                         this.settings.enabled = data.config.limit_enabled;
                         this.settings.max_parallel = data.config.max_parallel;
 
-                        this.updateChart(this.totalSpeed);
                     } catch (e) { console.error(e); }
                 },
 
@@ -264,7 +270,10 @@
                         options: {
                             responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
                             interaction: { intersect: false, mode: 'index' },
-                            scales: { y: { beginAtZero: true, grid: { color: '#374151' } }, x: { display: false } },
+                            scales: { 
+                                y: { beginAtZero: true, grid: { color: '#374151' }, ticks: { color: '#9ca3af' } }, 
+                                x: { display: false } 
+                            },
                             plugins: { legend: { display: false } }
                         }
                     });
@@ -273,7 +282,8 @@
                 updateChart(val) {
                     if (!this.chart) return;
                     const data = this.chart.data.datasets[0].data;
-                    data.shift(); data.push(val);
+                    data.shift();
+                    data.push(Number(val)); 
                     this.chart.update();
                 }
             }))

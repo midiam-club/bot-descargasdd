@@ -146,11 +146,17 @@ def flujo_descargas():
 
     while cola_de_trabajo or hilos_activos:
         hilos_activos = [t for t in hilos_activos if t.is_alive()]
-        limite_simultaneo = state.get_max_parallel()
         
-        while len(hilos_activos) < limite_simultaneo and cola_de_trabajo:
+        # --- CAMBIO IMPORTANTE ---
+        # No usamos state.get_max_parallel() aquí.
+        # Ponemos un límite fijo alto de "Gestores de Película" (ej: 5)
+        # Esto permite que hasta 5 películas se preparen/descompriman a la vez,
+        # pero el límite de DESCARGA REAL lo controla debrid.py
+        limite_gestores_pelicula = 5 
+        
+        while len(hilos_activos) < limite_gestores_pelicula and cola_de_trabajo:
             pid, datos = cola_de_trabajo.pop(0)
-            print(f"[Gestor] Iniciando hilo para: {datos['titulo']} (Activos: {len(hilos_activos)+1}/{limite_simultaneo})")
+            print(f"[Gestor] Iniciando hilo para: {datos['titulo']} (Activos: {len(hilos_activos)+1}/{limite_gestores_pelicula})")
             t = threading.Thread(target=worker_wrapper, args=(pid, datos))
             t.daemon = True
             t.start()

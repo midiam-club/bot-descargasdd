@@ -1,6 +1,6 @@
+import os
 import time
 import requests
-import os
 import config
 from urllib.parse import unquote
 from utils import debe_aplicar_limite, sanitizar_nombre # <--- IMPORTANTE
@@ -81,14 +81,17 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
         os.makedirs(carpeta_destino)
         
     nombre_archivo = obtener_nombre_archivo_de_url(url)
-    # NOMBRE SANITIZADO GARANTIZADO AQUÍ
-    
     ruta_temp = os.path.join(carpeta_destino, nombre_archivo + ".part")
     ruta_final = os.path.join(carpeta_destino, nombre_archivo)
     
     if os.path.exists(ruta_final):
         print(f"   [SKIP] Archivo ya existe: {nombre_archivo}")
         return ruta_final
+
+    # --- SEMÁFORO: ESPERAR TURNO ---
+    print(f"   [ESPERA] Esperando slot de descarga para: {nombre_archivo}...")
+    state.acquire_download_slot()
+    # -------------------------------
 
     print(f"   [DOWNLOAD] Iniciando: {nombre_archivo}")
     
@@ -130,11 +133,21 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
         duration_str = f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
 
         os.rename(ruta_temp, ruta_final)
+        
+        # --- LIBERAR SLOT (Éxito) ---
+        state.release_download_slot()
+        # ----------------------------
+
         state.finish_download(titulo_referencia, nombre_archivo, avg_speed, duration_str)
         return ruta_final
 
     except Exception as e:
         print(f"   [ERROR] Falló la descarga de {nombre_archivo}: {e}")
+        
+        # --- LIBERAR SLOT (Error) ---
+        state.release_download_slot()
+        # ----------------------------
+
         state.remove_download(titulo_referencia, nombre_archivo)
         if os.path.exists(ruta_temp):
             try: os.remove(ruta_temp)

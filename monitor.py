@@ -1,5 +1,5 @@
 import time
-from threading import Lock
+from threading import Lock, Condition
 import config 
 
 class DownloadMonitor:
@@ -8,12 +8,35 @@ class DownloadMonitor:
         self.active_downloads = {}
         self.history = {}
         self.total_speed = 0.0
-        # Configuración dinámica en memoria
+        
+        # --- NUEVO: GESTIÓN DE SLOTS DE DESCARGA ---
+        self.download_condition = Condition()
+        self.current_downloading_files = 0
+        
         self.dynamic_config = {
-            "max_parallel": config.MAX_WORKERS, # Inicia con el valor del .env
+            "max_parallel": config.MAX_WORKERS, 
             "limit_enabled": config.ENABLE_SPEED_LIMIT,
             "limit_value": config.SPEED_LIMIT_MB
         }
+
+    # --- MÉTODOS DE SEMÁFORO (BLOQUEANTES) ---
+    def acquire_download_slot(self):
+        """Bloquea el hilo hasta que haya un hueco libre para descargar"""
+        with self.download_condition:
+            # Mientras estemos llenos, esperamos
+            while self.current_downloading_files >= self.dynamic_config["max_parallel"]:
+                self.download_condition.wait()
+            # Ocupamos un hueco
+            self.current_downloading_files += 1
+
+    def release_download_slot(self):
+        """Libera un hueco y avisa a los que esperan"""
+        with self.download_condition:
+            if self.current_downloading_files > 0:
+                self.current_downloading_files -= 1
+            self.download_condition.notify_all() # Despierta a los hilos en espera
+
+    # --- RESTO DE MÉTODOS (Iguales, con pequeños ajustes) ---
 
     def update_download(self, pelicula, archivo, leido_bytes, total_bytes, velocidad_mb):
         with self._lock:
@@ -69,19 +92,18 @@ class DownloadMonitor:
         with self._lock:
             self.dynamic_config["limit_enabled"] = enabled
             self.dynamic_config["limit_value"] = float(limit_mb)
-        # Actualizamos config global para que lo lean otros módulos
         config.ENABLE_SPEED_LIMIT = enabled
         config.SPEED_LIMIT_MB = float(limit_mb)
 
     def set_max_parallel(self, n):
-        """Actualiza el límite de concurrencia"""
-        with self._lock:
+        # Actualizamos el límite dinámico y notificamos por si bajó el límite
+        with self.download_condition:
             val = int(n)
             if val < 1: val = 1
             self.dynamic_config["max_parallel"] = val
+            self.download_condition.notify_all() # Revisar condiciones
 
     def get_max_parallel(self):
-        """Lectura segura para el bucle principal"""
         with self._lock:
             return self.dynamic_config["max_parallel"]
 
