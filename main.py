@@ -21,30 +21,47 @@ def worker_descarga_pelicula(pid, datos_peli):
     
     print(f"[Worker {pid}] 🚀 Iniciando análisis para: {titulo}")
     
-    # A. Ruta 4K (Independiente)
-    if "2160p" in mapa:
-        v = mapa["2160p"]
-        if intentar_descarga(v, titulo):
-            print(f"[Worker {pid}]    -> ¡4K Descargada!")
-            # Si descargamos 4K, marcamos 4K y seguimos (puede querer también 1080p)
-            # Pero como la función main espera un retorno único para marcar, 
-            # hacemos la actualización aquí directo para el 4K.
-            db.marcar_cascada_descargado(pid, "2160p")
-            
-    # B. Ruta HD (x265 > 1080p > m1080p)
-    orden = []
-    if "x265" in mapa: orden.append(mapa["x265"])
-    if "1080p" in mapa: orden.append(mapa["1080p"])
-    if "m1080p" in mapa: orden.append(mapa["m1080p"])
+    # ---------------------------------------------------------
+    # CARRIL 1: ALTA DEFINICIÓN (HD) - Solo una versión
+    # Prioridad: x265 > 1080p > m1080p
+    # ---------------------------------------------------------
+    orden_hd = ["x265", "1080p", "m1080p"]
+    hd_descargada = False
     
-    for cand in orden:
-        print(f"[Worker {pid}]    -> Probando calidad {cand['formato']}...")
-        if intentar_descarga(cand, titulo):
-            print(f"[Worker {pid}]    -> ¡Éxito en {cand['formato']}!")
-            # Devolvemos el formato exitoso para hacer la cascada
-            return (pid, cand["id"], cand["formato"])
+    for fmt in orden_hd:
+        if fmt in mapa:
+            print(f"[Worker {pid}]    -> [HD] Probando calidad {fmt}...")
             
-    print(f"[Worker {pid}] 💀 Fin del hilo.")
+            # Intentamos descargar
+            if intentar_descarga(mapa[fmt], titulo):
+                print(f"[Worker {pid}]    -> ¡Éxito en {fmt}!")
+                
+                # 1. Marcamos en base de datos la cascada
+                #    (Si baja x265 -> marca x265, 1080p y m1080p)
+                #    (Si baja 1080p -> marca 1080p y m1080p)
+                db.marcar_cascada_descargado(pid, fmt)
+                
+                hd_descargada = True
+                
+                # 2. IMPORTANTE: Rompemos el bucle (break)
+                #    Así garantizamos que solo se baja UNA versión HD.
+                break 
+    
+    if not hd_descargada:
+        print(f"[Worker {pid}]    -> [HD] No se pudo descargar ninguna versión HD.")
+
+    # ---------------------------------------------------------
+    # CARRIL 2: ULTRA ALTA DEFINICIÓN (4K) - Independiente
+    # Se descarga SIEMPRE si está disponible
+    # ---------------------------------------------------------
+    if "2160p" in mapa:
+        print(f"[Worker {pid}]    -> [4K] Buscando versión 2160p...")
+        if intentar_descarga(mapa["2160p"], titulo):
+            print(f"[Worker {pid}]    -> ¡Éxito en 2160p!")
+            # Marcamos solo la 4K como descargada
+            db.marcar_cascada_descargado(pid, "2160p")
+    
+    print(f"[Worker {pid}] 🏁 Tarea finalizada para: {titulo}")
     return (pid, None, None)
 
 def extraer_numero_parte(filename):
