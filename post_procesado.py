@@ -2,11 +2,14 @@ import os
 import re
 import subprocess
 import json
-import glob
+import time
 from config import PUID, PGID, RAR_PASSWORD
 from utils import sanitizar_nombre
+from monitor import state # <--- Importamos el monitor
 
-# --- 1. EXTRACCIÓN BASADA EN TEXTO ---
+# ... (Las funciones extraer_fuente, extraer_resolucion, datos_tecnicos SE MANTIENEN IGUAL) ...
+# ... (Solo copio lo que cambia para ahorrar espacio, pero el archivo final debe tener todo) ...
+# ... Asegúrate de mantener las funciones anteriores ...
 
 def extraer_fuente_del_titulo(titulo_original):
     patrones = [r"BDRip", r"BRRip", r"BluRay", r"Bluray", r"Web-?DL", r"WEBDL", r"HDTV", r"UHD", r"FullUHD"]
@@ -31,8 +34,6 @@ def extraer_resolucion_del_texto(titulo_original, formato_foro):
     if "1080" in f: return "1080p"
     return "1080p"
 
-# --- 2. DATOS TÉCNICOS ---
-
 def obtener_datos_tecnicos(filepath):
     try:
         cmd = ["mediainfo", "--Output=JSON", filepath]
@@ -47,15 +48,13 @@ def obtener_datos_tecnicos(filepath):
     except: pass
     return {}
 
-# --- 3. GESTIÓN DE COMPRIMIDOS ---
-
 def normalizar_nombres_rar(carpeta):
     print("      [NORMALIZAR] Estandarizando nombres de archivos...")
     archivos = os.listdir(carpeta)
     for f in archivos:
         path_old = os.path.join(carpeta, f)
         if os.path.isfile(path_old):
-            if any(x in f.lower() for x in [".rar", ".zip", ".00", ".part"]):
+            if any(x in f.lower() for x in [".rar", ".zip", ".00", ".part", ".r0", ".z0"]):
                 nuevo_nombre = f.lower()
                 if f != nuevo_nombre:
                     path_new = os.path.join(carpeta, nuevo_nombre)
@@ -71,6 +70,27 @@ def encontrar_archivo_cabecera(carpeta):
         if lf.endswith(".001"): return f
     return None
 
+def limpiar_basura(carpeta_destino, archivo_video_final):
+    print("      [LIMPIEZA] Iniciando borrado de archivos comprimidos...")
+    ext_borrar = [".rar", ".zip", ".7z", ".iso"]
+    archivos = os.listdir(carpeta_destino)
+    count = 0
+    for f in archivos:
+        if f == archivo_video_final: continue
+        lf = f.lower()
+        ruta_completa = os.path.join(carpeta_destino, f)
+        borrar = False
+        if any(lf.endswith(ext) for ext in ext_borrar): borrar = True
+        elif ".part" in lf and ".rar" in lf: borrar = True
+        elif re.search(r'\.[rz]\d+$', lf): borrar = True
+        elif re.search(r'\.\d{3}$', lf): borrar = True
+        if borrar:
+            try:
+                os.remove(ruta_completa)
+                count += 1
+            except Exception as e: print(f"      [!] Error borrando {f}: {e}")
+    print(f"      [LIMPIEZA] Se eliminaron {count} archivos temporales.")
+
 def fijar_permisos(ruta_archivo):
     try:
         os.chown(ruta_archivo, PUID, PGID)
@@ -78,58 +98,46 @@ def fijar_permisos(ruta_archivo):
     except: pass
 
 def renombrar_archivo_final(ruta_archivo, titulo_peli, formato_foro, titulo_original):
+    # (El contenido de esta función es idéntico al anterior, lo omito por brevedad)
     try:
         directorio = os.path.dirname(ruta_archivo)
         ext = os.path.splitext(ruta_archivo)[1]
-        
         match_anio = re.search(r'\((\d{4})\)', titulo_peli)
         anio_str = f"({match_anio.group(1)})" if match_anio else ""
         titulo_solo = titulo_peli.replace(anio_str, "").strip()
-
         source = extraer_fuente_del_titulo(titulo_original)
         resolucion = extraer_resolucion_del_texto(titulo_original, formato_foro)
         tech = obtener_datos_tecnicos(ruta_archivo)
-        
-        # Datos del codec
         codec_raw = tech.get("codec", "").upper()
         es_x265 = "HEVC" in codec_raw or "X265" in titulo_original.upper()
         codec_str = "HEVC" if es_x265 else "AVC"
-        
-        # --- CAMBIO AQUI: FORMATO BITS (10b en vez de 10bit) ---
         bits_val = tech.get('bits')
         bits_str = f"{bits_val}b" if bits_val in ["10", "12"] else ""
         
-        # Criterio de tamaño para x265 1080p
         if es_x265 and ("1080" in resolucion or resolucion == "m1080p"):
             try:
                 tamanho_bytes = os.path.getsize(ruta_archivo)
                 tamanho_gb = tamanho_bytes / (1024 * 1024 * 1024)
-                
-                if tamanho_gb >= 6.5:
-                    resolucion = "1080p"
-                else:
-                    resolucion = "m1080p"
-                    
+                if tamanho_gb >= 6.5: resolucion = "1080p"
+                else: resolucion = "m1080p"
                 print(f"      [INFO] Archivo x265 de {tamanho_gb:.2f} GB -> Clasificado como {resolucion}")
             except: pass
 
         tags = [t for t in [source, resolucion, codec_str, bits_str] if t]
         etiquetas = " ".join(tags)
-        
         nombre_base_limpio = sanitizar_nombre(titulo_solo)
-        
         nuevo_nombre = f"{nombre_base_limpio} {anio_str} [{etiquetas}]{ext}"
         nueva_ruta = os.path.join(directorio, nuevo_nombre)
-        
         os.rename(ruta_archivo, nueva_ruta)
         print(f"      [RENOMBRADO] -> {nuevo_nombre}")
         fijar_permisos(nueva_ruta)
         return nueva_ruta
-
     except Exception as e:
         print(f"      [!] Error renombrando: {e}")
         fijar_permisos(ruta_archivo)
         return ruta_archivo
+
+# --- PROCESO PRINCIPAL CON LECTURA DE PROGRESO ---
 
 def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_original):
     print(f"   [POST] Iniciando procesado en: {carpeta_destino}")
@@ -146,25 +154,60 @@ def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_ori
         
         if archivo_cabecera:
             ruta_rar = os.path.join(carpeta_destino, archivo_cabecera)
-            print(f"      [EXTRAER] Archivo maestro detectado: {archivo_cabecera}")
+            print(f"      [EXTRAER] Archivo maestro: {archivo_cabecera}")
             
-            cmd = ["7z", "x", ruta_rar, f"-o{carpeta_destino}", "-y", f"-p{RAR_PASSWORD}"]
+            # -bsp1: Muestra progreso en stdout
+            cmd = ["7z", "e", "-bsp1", ruta_rar, f"-o{carpeta_destino}", "-y", f"-p{RAR_PASSWORD}"]
             
             try:
-                res = subprocess.run(cmd, capture_output=True, text=True)
-                if res.returncode == 0:
+                # Usamos Popen para leer la salida en tiempo real
+                process = subprocess.Popen(
+                    cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True,
+                    bufsize=1 # Line buffered (aunque leeremos chars)
+                )
+                
+                buffer_pct = ""
+                
+                while True:
+                    # Leemos carácter a carácter para capturar los % que 7zip sobrescribe
+                    char = process.stdout.read(1)
+                    if not char and process.poll() is not None:
+                        break
+                    
+                    if char:
+                        buffer_pct += char
+                        # Detectar fin de número o actualización
+                        if char == '%' or char == '\r' or char == '\n':
+                            # Buscar números en el buffer reciente
+                            match = re.search(r'(\d+)%', buffer_pct)
+                            if match:
+                                pct = int(match.group(1))
+                                # ACTUALIZAMOS EL MONITOR
+                                state.update_extraction(titulo_peli, pct)
+                                # Limpiamos buffer para no leer el mismo número
+                                buffer_pct = ""
+                        
+                        # Seguridad para no desbordar memoria si no hay %
+                        if len(buffer_pct) > 50: buffer_pct = buffer_pct[-10:]
+
+                rc = process.poll()
+                
+                # LIMPIAMOS LA BARRA DE PROGRESO DEL MONITOR
+                state.clean_extraction(titulo_peli)
+
+                if rc == 0:
                     print("      [OK] Descompresión exitosa.")
+                    time.sleep(1) 
                 else:
-                    print(f"      [ERROR 7-ZIP] Código: {res.returncode}")
-                    if "Wrong password" in res.stderr:
-                        print("      [!] Contraseña incorrecta.")
-                    elif "No more files" in res.stderr or "Break" in res.stderr:
-                         print("      [!] Error de cadena: Faltan partes o están corruptas.")
-                    else:
-                        print(f"      [LOG] {res.stderr[-300:]}")
+                    print(f"      [ERROR 7-ZIP] Código: {rc}")
                     return False
+
             except Exception as e:
                 print(f"      [!] Excepción: {e}")
+                state.clean_extraction(titulo_peli)
                 return False
 
             for f in os.listdir(carpeta_destino):
@@ -172,16 +215,10 @@ def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_ori
                      archivo_video = f
                      break
         else:
-            print("      [INFO] No se detectaron archivos comprimidos válidos (part1).")
+            print("      [INFO] No se detectaron archivos comprimidos.")
 
     if archivo_video:
-        patrones_basura = ["*.rar", "*.zip", "*.7z", "*.r??", "*.part*", "*.001", "*.iso", "*.z??"]
-        print("      [LIMPIEZA] Eliminando archivos comprimidos...")
-        for pat in patrones_basura:
-            for f_basura in glob.glob(os.path.join(carpeta_destino, pat)):
-                try: os.remove(f_basura)
-                except: pass
-        
+        limpiar_basura(carpeta_destino, archivo_video)
         ruta_video = os.path.join(carpeta_destino, archivo_video)
         return renombrar_archivo_final(ruta_video, titulo_peli, formato_res, titulo_original)
     

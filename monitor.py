@@ -9,7 +9,10 @@ class DownloadMonitor:
         self.history = {}
         self.total_speed = 0.0
         
-        # --- NUEVO: GESTIÓN DE SLOTS DE DESCARGA ---
+        # --- NUEVO: TÍTULOS COMPLETADOS ---
+        self.completed_titles = set()
+        
+        # Gestión de Slots
         self.download_condition = Condition()
         self.current_downloading_files = 0
         
@@ -19,25 +22,25 @@ class DownloadMonitor:
             "limit_value": config.SPEED_LIMIT_MB
         }
 
-    # --- MÉTODOS DE SEMÁFORO (BLOQUEANTES) ---
+    # --- NUEVO MÉTODO: MARCAR COMO COMPLETADO ---
+    def mark_completed(self, titulo):
+        with self._lock:
+            self.completed_titles.add(titulo)
+
+    # --- SEMÁFORO ---
     def acquire_download_slot(self):
-        """Bloquea el hilo hasta que haya un hueco libre para descargar"""
         with self.download_condition:
-            # Mientras estemos llenos, esperamos
             while self.current_downloading_files >= self.dynamic_config["max_parallel"]:
                 self.download_condition.wait()
-            # Ocupamos un hueco
             self.current_downloading_files += 1
 
     def release_download_slot(self):
-        """Libera un hueco y avisa a los que esperan"""
         with self.download_condition:
             if self.current_downloading_files > 0:
                 self.current_downloading_files -= 1
-            self.download_condition.notify_all() # Despierta a los hilos en espera
+            self.download_condition.notify_all()
 
-    # --- RESTO DE MÉTODOS (Iguales, con pequeños ajustes) ---
-
+    # --- RESTO DE MÉTODOS (Iguales) ---
     def update_download(self, pelicula, archivo, leido_bytes, total_bytes, velocidad_mb):
         with self._lock:
             if pelicula not in self.active_downloads:
@@ -49,9 +52,31 @@ class DownloadMonitor:
                 "progress": round(porcentaje, 1),
                 "speed": round(velocidad_mb, 2),
                 "downloaded": round(leido_bytes / (1024*1024), 2),
-                "total": round(total_bytes / (1024*1024), 2)
+                "total": round(total_bytes / (1024*1024), 2),
+                "status": "downloading"
             }
             self._recalculate_total_speed()
+
+    def update_extraction(self, pelicula, porcentaje):
+        with self._lock:
+            if pelicula not in self.active_downloads:
+                self.active_downloads[pelicula] = {}
+            clave_fake = "📦 Descomprimiendo..."
+            self.active_downloads[pelicula][clave_fake] = {
+                "progress": round(porcentaje, 1),
+                "speed": 0,
+                "downloaded": 0,
+                "total": 0,
+                "status": "extracting"
+            }
+
+    def clean_extraction(self, pelicula):
+        with self._lock:
+            if pelicula in self.active_downloads:
+                if "📦 Descomprimiendo..." in self.active_downloads[pelicula]:
+                    del self.active_downloads[pelicula]["📦 Descomprimiendo..."]
+                if not self.active_downloads[pelicula]:
+                    del self.active_downloads[pelicula]
 
     def finish_download(self, pelicula, archivo, avg_speed, duration_str):
         with self._lock:
@@ -85,7 +110,8 @@ class DownloadMonitor:
         total = 0.0
         for peli in self.active_downloads.values():
             for datos in peli.values():
-                total += datos["speed"]
+                if datos.get("status") == "downloading":
+                    total += datos["speed"]
         self.total_speed = round(total, 2)
 
     def set_speed_limit(self, enabled, limit_mb):
@@ -96,12 +122,11 @@ class DownloadMonitor:
         config.SPEED_LIMIT_MB = float(limit_mb)
 
     def set_max_parallel(self, n):
-        # Actualizamos el límite dinámico y notificamos por si bajó el límite
         with self.download_condition:
             val = int(n)
             if val < 1: val = 1
             self.dynamic_config["max_parallel"] = val
-            self.download_condition.notify_all() # Revisar condiciones
+            self.download_condition.notify_all()
 
     def get_max_parallel(self):
         with self._lock:
@@ -113,7 +138,9 @@ class DownloadMonitor:
                 "downloads": self.active_downloads,
                 "history": self.history,
                 "total_speed": self.total_speed,
-                "config": self.dynamic_config
+                "config": self.dynamic_config,
+                # Enviamos la lista de completados al frontend
+                "completed": list(self.completed_titles)
             }
 
 state = DownloadMonitor()
