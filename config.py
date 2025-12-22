@@ -30,13 +30,16 @@ SESSION_FILE = os.path.join(CONFIG_DIR, "config.json")
 FORO_USER = os.getenv("FORO_USER")
 FORO_PASS = os.getenv("FORO_PASS")
 FLARESOLVERR_URL = os.getenv("FLARESOLVERR_URL")
-SESSION_FILE = "sesion.json"
 
 # Debrid
 RD_TOKEN = os.getenv("REALDEBRID_API_TOKEN")
 DL_TOKEN = os.getenv("DEBRIDLINK_API_KEY")
 DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/app/downloads")
 DEBRID_PRIORIDAD = os.getenv("DEBRID_PRIORIDAD", "RD")
+
+# --- AJUSTES DE EXTRACCIÓN (NUEVO) ---
+# Contraseña por defecto para los archivos RAR de DescargasDD
+RAR_PASSWORD = os.getenv("RAR_PASSWORD", "descargasdd")
 
 # Base de Datos
 DB_CONFIG = {
@@ -118,8 +121,8 @@ HOSTER_PREFS = {
     "voe": "RD",
 
     # --- ASIGNADOS A DEBRIDLINK (DL) ---
-    "ddownload": "DL",      # (Estaba en ambos, asignado a DL)
-    "file.al": "DL",        # (Estaba en ambos, asignado a DL)
+    "ddownload": "DL",      
+    "file.al": "DL",        
     "drop.download": "DL",
     "elitefile": "DL",
     "emload": "DL",
@@ -140,8 +143,6 @@ HOSTER_PREFS = {
 }
 
 # ORDEN DE PREFERENCIA DE DESCARGA
-# El bot ordenará los enlaces encontrados siguiendo este orden.
-# Si un servidor no está en la lista, se dejará para el final.
 PRIORIDAD_DOMINIOS = [
     "1fichier",
     "katfile",
@@ -153,6 +154,4 @@ PRIORIDAD_DOMINIOS = [
 ]
 
 # PALABRAS NEGRAS (BLACKLIST)
-# Si el título contiene alguna de estas palabras, se ignora.
-# Escríbelas en MAYÚSCULAS.
 PALABRAS_EXCLUIDAS = ["REMUX", "FULLUHD", "ISO", "720P", "CANAL TELEGRAM", "LISTADO", "HIDE"]
