@@ -4,7 +4,7 @@ import subprocess
 import json
 import glob
 from config import PUID, PGID, RAR_PASSWORD
-from utils import sanitizar_nombre 
+from utils import sanitizar_nombre
 
 # --- 1. EXTRACCIÓN BASADA EN TEXTO ---
 
@@ -94,29 +94,28 @@ def renombrar_archivo_final(ruta_archivo, titulo_peli, formato_foro, titulo_orig
         codec_raw = tech.get("codec", "").upper()
         es_x265 = "HEVC" in codec_raw or "X265" in titulo_original.upper()
         codec_str = "HEVC" if es_x265 else "AVC"
-        bits_str = f"{tech.get('bits')}bit" if tech.get("bits") in ["10", "12"] else ""
         
-        # --- NUEVA LÓGICA: CRITERIO DE TAMAÑO PARA x265 1080p ---
+        # --- CAMBIO AQUI: FORMATO BITS (10b en vez de 10bit) ---
+        bits_val = tech.get('bits')
+        bits_str = f"{bits_val}b" if bits_val in ["10", "12"] else ""
+        
+        # Criterio de tamaño para x265 1080p
         if es_x265 and ("1080" in resolucion or resolucion == "m1080p"):
             try:
                 tamanho_bytes = os.path.getsize(ruta_archivo)
-                tamanho_gb = tamanho_bytes / (1024 * 1024 * 1024) # Convertir a GB
+                tamanho_gb = tamanho_bytes / (1024 * 1024 * 1024)
                 
-                # UMBRAL: 6.5 GB
                 if tamanho_gb >= 6.5:
                     resolucion = "1080p"
                 else:
                     resolucion = "m1080p"
                     
                 print(f"      [INFO] Archivo x265 de {tamanho_gb:.2f} GB -> Clasificado como {resolucion}")
-            except:
-                pass # Si falla al leer tamaño, mantenemos la resolución original
-        # ---------------------------------------------------------
+            except: pass
 
         tags = [t for t in [source, resolucion, codec_str, bits_str] if t]
         etiquetas = " ".join(tags)
         
-        # Usamos sanitizar_nombre desde utils para asegurar compatibilidad Windows
         nombre_base_limpio = sanitizar_nombre(titulo_solo)
         
         nuevo_nombre = f"{nombre_base_limpio} {anio_str} [{etiquetas}]{ext}"
