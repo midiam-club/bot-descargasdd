@@ -131,4 +131,32 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia):
                         # --- 1. MONITORIZACIÓN WEB ---
                         current_time = time.time()
                         elapsed = current_time - start_time
-                        speed_mb = 0.
+                        speed_mb = 0.0
+                        if elapsed > 0:
+                            speed_mb = (descargado / (1024 * 1024)) / elapsed
+                        
+                        # Actualizamos el estado global para el Dashboard
+                        state.update_download(titulo_referencia, nombre_archivo, descargado, total_size, speed_mb)
+
+                        # --- 2. LIMITADOR DE VELOCIDAD (HORARIO) ---
+                        if config.SPEED_LIMIT_MB > 0 and debe_aplicar_limite():
+                            # Si vamos más rápido que el límite, dormimos un poco
+                            if speed_mb > config.SPEED_LIMIT_MB:
+                                time.sleep(0.5)
+
+        # Si llegamos aquí, la descarga terminó bien
+        os.rename(ruta_temp, ruta_final)
+        
+        # Limpiamos el monitor
+        state.remove_download(titulo_referencia, nombre_archivo)
+        
+        return ruta_final
+
+    except Exception as e:
+        print(f"   [ERROR] Falló la descarga de {nombre_archivo}: {e}")
+        # En caso de error, limpiamos el monitor también
+        state.remove_download(titulo_referencia, nombre_archivo)
+        if os.path.exists(ruta_temp):
+            try: os.remove(ruta_temp)
+            except: pass
+        return None
