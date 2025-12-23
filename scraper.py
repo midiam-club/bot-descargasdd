@@ -8,13 +8,13 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 URL_BASE = "https://descargasdd.org"
 
-# --- SELECTORES BASADOS EN TU HTML (NAVBAR) ---
+# --- SELECTORES (Navbar) ---
 SELECTOR_USER = "#navbar_username"
-SELECTOR_PASS_HINT = "#navbar_password_hint" # El campo visible que pone "Contraseña"
-SELECTOR_PASS_REAL = "#navbar_password"      # El campo oculto (display: none)
-SELECTOR_CHECKBOX = "#cb_cookieuser_navbar"  # Checkbox "Recordarme"
-SELECTOR_LOGIN_BTN = ".loginbutton"          # Botón submit
-SELECTOR_LOGOUT = "text=Finalizar sesión"    # Texto para confirmar éxito
+SELECTOR_PASS_HINT = "#navbar_password_hint" 
+SELECTOR_PASS_REAL = "#navbar_password"      
+SELECTOR_CHECKBOX = "#cb_cookieuser_navbar"  
+SELECTOR_LOGIN_BTN = ".loginbutton"          
+SELECTOR_LOGOUT = "text=Finalizar sesión"    
 
 def espera_humana():
     time.sleep(random.uniform(1.5, 3.0))
@@ -62,37 +62,30 @@ def obtener_cookies_flaresolverr():
         print(f"   [FLARESOLVERR] Error: {e}")
     return None
 
-# --- LOGIN (NAVBAR EXACTO) ---
+# --- LOGIN (NAVBAR) ---
 
 def realizar_login(page):
-    print("   [SCRAPER] Iniciando login (Vía Navbar)...")
+    print("   [SCRAPER] Iniciando login (Navbar)...")
     
     try:
-        # Vamos a la raíz, donde está la navbar
         page.goto(URL_BASE, wait_until="domcontentloaded", timeout=60000)
         
         # 1. USUARIO
         print("   [LOGIN] Introduciendo usuario...")
         page.wait_for_selector(SELECTOR_USER, state="visible", timeout=10000)
-        page.fill(SELECTOR_USER, "") # Limpiamos el texto "Usuario" por defecto
+        page.fill(SELECTOR_USER, "") 
         page.fill(SELECTOR_USER, config.FORO_USER)
         espera_humana()
 
         # 2. CONTRASEÑA (Gestión del campo oculto)
         print("   [LOGIN] Gestionando contraseña oculta...")
-        
-        # Verificamos si el campo HINT ("Contraseña") es el que está visible
         if page.locator(SELECTOR_PASS_HINT).is_visible():
-            # Hacemos clic para activar el script de vBulletin que muestra el campo real
             page.click(SELECTOR_PASS_HINT)
-            
-            # Esperamos a que el campo REAL sea visible (el JS cambia display:none a inline)
             try:
                 page.wait_for_selector(SELECTOR_PASS_REAL, state="visible", timeout=3000)
             except:
                 print("   [WARN] El campo password real tardó en aparecer. Forzando escritura...")
         
-        # Escribimos en el campo real
         page.fill(SELECTOR_PASS_REAL, config.FORO_PASS)
         espera_humana()
         
@@ -103,24 +96,22 @@ def realizar_login(page):
         
         # 4. SUBMIT
         print("   [LOGIN] Pulsando botón entrar...")
-        # Usamos .first porque a veces hay duplicados ocultos
         page.locator(SELECTOR_LOGIN_BTN).first.click()
         
         page.wait_for_load_state("domcontentloaded")
         
         # 5. VERIFICACIÓN
-        # Si aparece "Finalizar sesión", estamos dentro
         if page.locator(SELECTOR_LOGOUT).is_visible(timeout=10000):
             print("   [SCRAPER] ✅ Login EXITOSO.")
             return True
         
-        print("   [SCRAPER] ❌ Login FALLIDO. Guardando captura...")
-        page.screenshot(path=f"{config.DOWNLOAD_DIR}/debug_login_fail.png")
+        print(f"   [SCRAPER] ❌ Login FALLIDO. Guardando captura en {config.LOG_DIR}...")
+        page.screenshot(path=f"{config.LOG_DIR}/debug_login_fail.png")
         return False
 
     except Exception as e:
         print(f"   [!] Excepción crítica en login: {e}")
-        try: page.screenshot(path=f"{config.DOWNLOAD_DIR}/debug_login_crash.png")
+        try: page.screenshot(path=f"{config.LOG_DIR}/debug_login_crash.png")
         except: pass
         return False
 
@@ -149,8 +140,8 @@ def reparar_hilos_rotos(page):
                 cur.close(); conn.close()
                 print(f"      [OK] Recuperados {len(enlaces)} enlaces.")
             else:
-                print("      [FAIL] Sin enlaces. Debug guardado.")
-                page.screenshot(path=f"{config.DOWNLOAD_DIR}/debug_repair_fail_{hilo_id}.png")
+                print(f"      [FAIL] Sin enlaces. Debug guardado en {config.LOG_DIR}.")
+                page.screenshot(path=f"{config.LOG_DIR}/debug_repair_fail_{hilo_id}.png")
             espera_humana()
         except Exception as e:
             print(f"      [ERROR] Reparación fallida: {e}")
@@ -221,6 +212,7 @@ def ejecutar(context):
     
     page = context.new_page()
     try:
+        # SIEMPRE LOGIN
         if not realizar_login(page):
             print("   [SCRAPER] ABORTANDO: Fallo login.")
             page.close()

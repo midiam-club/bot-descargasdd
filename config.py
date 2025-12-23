@@ -1,6 +1,5 @@
 import os
 from datetime import time
-from dotenv import load_dotenv
 
 # PERMISOS
 try:
@@ -9,10 +8,7 @@ try:
 except:
     PUID, PGID = 0, 0
 
-load_dotenv()
-
 # --- DIRECTORIOS ---
-# --- PERSISTENCIA DE SESIÓN ---
 # Definimos la carpeta persistente (dentro del contenedor suele ser /config)
 CONFIG_DIR = "/config"
 
@@ -22,9 +18,14 @@ if not os.path.exists(CONFIG_DIR):
     if not os.path.exists(CONFIG_DIR):
         os.makedirs(CONFIG_DIR)
 
+# --- NUEVO: DIRECTORIO DE LOGS ---
+LOG_DIR = os.path.join(CONFIG_DIR, "log")
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+
 # --- RUTAS DE ARCHIVOS PERSISTENTES ---
-# Ruta absoluta al archivo de sesión
 SESSION_FILE = os.path.join(CONFIG_DIR, "config.json")
+DATA_DIR = CONFIG_DIR 
 
 # Credenciales Foro
 FORO_USER = os.getenv("FORO_USER")
@@ -37,17 +38,23 @@ DL_TOKEN = os.getenv("DEBRIDLINK_API_KEY")
 DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/app/downloads")
 DEBRID_PRIORIDAD = os.getenv("DEBRID_PRIORIDAD", "RD")
 
-# --- AJUSTES DE EXTRACCIÓN (NUEVO) ---
-# Contraseña por defecto para los archivos RAR de DescargasDD
+# --- AJUSTES DE EXTRACCIÓN ---
 RAR_PASSWORD = os.getenv("RAR_PASSWORD", "descargasdd")
 
-# Base de Datos
+# Base de Datos (POSTGRESQL)
+DB_HOST = os.getenv("POSTGRES_HOST", "db") 
+DB_NAME = os.getenv("POSTGRES_DB", "bot_db")
+DB_USER = os.getenv("POSTGRES_USER", "postgres")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+DB_PORT = os.getenv("POSTGRES_PORT", "5432")
+
+# Diccionario de conexión para psycopg2
 DB_CONFIG = {
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASS"),
-    "host": os.getenv("DB_HOST"),
-    "port": os.getenv("DB_PORT", "5432")
+    "dbname": DB_NAME,
+    "user": DB_USER,
+    "password": DB_PASSWORD,
+    "host": DB_HOST,
+    "port": DB_PORT
 }
 
 # Configuración del Bot
@@ -64,102 +71,42 @@ except: SPEED_LIMIT_MB = 0
 _enable_txt = os.getenv("ENABLE_SPEED_LIMIT", "true").lower()
 ENABLE_SPEED_LIMIT = _enable_txt in ["true", "1", "yes", "si", "on"]
 
-# Función auxiliar para convertir "08:30" -> objeto time(8, 30)
 def _parse_time(time_str):
     try:
         if not time_str: return None
         parts = list(map(int, time_str.split(':')))
-        if len(parts) == 3: return time(parts[0], parts[1], parts[2]) # HH:MM:SS
-        if len(parts) == 2: return time(parts[0], parts[1])           # HH:MM
-        if len(parts) == 1: return time(parts[0], 0)                  # HH
+        if len(parts) == 3: return time(parts[0], parts[1], parts[2]) 
+        if len(parts) == 2: return time(parts[0], parts[1])           
+        if len(parts) == 1: return time(parts[0], 0)                  
     except: pass
     return None
 
-# Cargamos las horas exactas (Default: 08:00 a 00:00)
 LIMIT_START_TIME = _parse_time(os.getenv("LIMIT_START_TIME", "08:00:00")) or time(8, 0, 0)
 LIMIT_END_TIME = _parse_time(os.getenv("LIMIT_END_TIME", "20:00:00")) or time(0, 0, 0)
 
 # Enrutamiento de Servidores
-# Configuración CONJUNTA: Lista 1 -> RD | Lista 2 -> DL
 HOSTER_PREFS = {
-    # --- ASIGNADOS A REAL DEBRID (RD) ---
-    "1fichier": "RD",
-    "4shared": "RD",
-    "brupload": "RD",
-    "clicknupload": "RD",
-    "dailymotion": "RD",
-    "dailyuploads": "RD",
-    "ddl.to": "RD",
-    "dropbox": "RD",
-    "filefactory": "RD",
-    "filespace": "RD",
-    "filestore": "RD",
-    "filextras": "RD",
-    "gigapeta": "RD",
-    "drive": "RD",       # Google Drive
-    "google": "RD",      # Variación Google
-    "hexupload": "RD",
-    "hexload": "RD",
-    "hitfile": "RD",
-    "icloud": "RD",
-    "isra.cloud": "RD",
-    "katfile": "RD",
-    "mediafire": "RD",
-    "mega": "RD",
-    "prefiles": "RD",
-    "radiotunes": "RD",
-    "rapidgator": "RD",
-    "redtube": "RD",
-    "scribd": "RD",
-    "send.cm": "RD",
-    "send.now": "RD",
-    "sendspace": "RD",
-    "terabytez": "RD",
-    "turbobit": "RD",
-    "uploady": "RD",
-    "vimeo": "RD",
-    "voe": "RD",
-
-    # --- ASIGNADOS A DEBRIDLINK (DL) ---
-    "ddownload": "DL",      
-    "file.al": "DL",        
-    "drop.download": "DL",
-    "elitefile": "DL",
-    "emload": "DL",
-    "fikper": "DL",
-    "filecat": "DL",
-    "filedot": "DL",
-    "fileland": "DL",
-    "filer.net": "DL",
-    "gofile": "DL",
-    "hulkshare": "DL",
-    "kshared": "DL",
-    "mixdrop": "DL",
-    "nelion": "DL",
-    "pixeldrain": "DL",
-    "silkfiles": "DL",
-    "terabox": "DL",
-    "tezfiles": "DL"
+    "1fichier": "RD", "4shared": "RD", "brupload": "RD", "clicknupload": "RD",
+    "dailymotion": "RD", "dailyuploads": "RD", "ddl.to": "RD", "dropbox": "RD",
+    "filefactory": "RD", "filespace": "RD", "filestore": "RD", "filextras": "RD",
+    "gigapeta": "RD", "drive": "RD", "google": "RD", "hexupload": "RD",
+    "hexload": "RD", "hitfile": "RD", "icloud": "RD", "isra.cloud": "RD",
+    "katfile": "RD", "mediafire": "RD", "mega": "RD", "prefiles": "RD",
+    "radiotunes": "RD", "rapidgator": "RD", "redtube": "RD", "scribd": "RD",
+    "send.cm": "RD", "send.now": "RD", "sendspace": "RD", "terabytez": "RD",
+    "turbobit": "RD", "uploady": "RD", "vimeo": "RD", "voe": "RD",
+    # DL
+    "ddownload": "DL", "file.al": "DL", "drop.download": "DL", "elitefile": "DL",
+    "emload": "DL", "fikper": "DL", "filecat": "DL", "filedot": "DL",
+    "fileland": "DL", "filer.net": "DL", "gofile": "DL", "hulkshare": "DL",
+    "kshared": "DL", "mixdrop": "DL", "nelion": "DL", "pixeldrain": "DL",
+    "silkfiles": "DL", "terabox": "DL", "tezfiles": "DL"
 }
 
-# ORDEN DE PREFERENCIA DE DESCARGA
 PRIORIDAD_DOMINIOS = [
-    "1fichier",
-    "katfile",
-    "pixeldrain",
-    "mega",
-    "drive",
-    "rapidgator",
-    "turbobit"
+    "1fichier", "katfile", "pixeldrain", "mega", "drive", "rapidgator", "turbobit"
 ]
 
-# PALABRAS NEGRAS (BLACKLIST)
 PALABRAS_EXCLUIDAS = ["REMUX", "FULLUHD", "ISO", "720P", "CANAL TELEGRAM", "LISTADO", "HIDE"]
-
-# --- INTERVALO DE COMPROBACIÓN ---
-# Tiempo en segundos que el bot duerme entre escaneos (Por defecto: 10 minutos)
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))
-
-# --- CONFIGURACIÓN DE IDENTIDAD ---
-# User-Agent moderno (Chrome 123 en Windows 10) para parecer un humano real
 DEFAULT_USER_AGENT = os.getenv("USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
