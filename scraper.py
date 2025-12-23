@@ -1,21 +1,20 @@
 import time
 import re
 import random
-import requests # NECESARIO PARA FLARESOLVERR
-import json
+import requests
 import config
 import database as db
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 URL_BASE = "https://descargasdd.org"
 
-# SELECTORES
-SELECTOR_LOGOUT = "text=Finalizar sesión"
-SELECTOR_USER = "input[name='vb_login_username']"
-SELECTOR_PASS = "input[name='vb_login_password']"
-SELECTOR_LOGIN_BTN = "input[value='Iniciar sesión']"
-SELECTOR_USER_ALT = "input[name='username']"
-SELECTOR_PASS_ALT = "input[name='password']"
+# --- SELECTORES EXACTOS DEL HTML PROPORCIONADO ---
+# Usamos IDs (#) que son más precisos que los names
+SELECTOR_USER = "#navbar_username"
+SELECTOR_PASS_HINT = "#navbar_password_hint"  # El campo falso que dice "Contraseña"
+SELECTOR_PASS = "#navbar_password"            # El campo real (oculto al principio)
+SELECTOR_LOGIN_BTN = "input.loginbutton"      # Botón de entrar
+SELECTOR_LOGOUT = "text=Finalizar sesión"     # Para comprobar si entró
 
 def espera_humana():
     time.sleep(random.uniform(1.5, 3.0))
@@ -45,86 +44,66 @@ def extraer_enlaces_post(contenido_html):
                 break
     return list(set(enlaces))
 
-# --- FLARESOLVERR INTEGRATION ---
+# --- FLARESOLVERR ---
 
 def obtener_cookies_flaresolverr():
-    """
-    Solicita a FlareSolverr que resuelva el desafío de Cloudflare
-    y devuelve las cookies listas para Playwright.
-    """
-    if not config.FLARESOLVERR_URL:
-        print("   [FLARESOLVERR] URL no configurada. Saltando.")
-        return None
-
+    if not config.FLARESOLVERR_URL: return None
     print(f"   [FLARESOLVERR] Solicitando acceso a {URL_BASE}...")
     headers = {"Content-Type": "application/json"}
-    data = {
-        "cmd": "request.get",
-        "url": URL_BASE,
-        "maxTimeout": 60000
-    }
-
+    data = {"cmd": "request.get", "url": URL_BASE, "maxTimeout": 60000}
     try:
-        # Ajustamos la URL para apuntar al endpoint correcto /v1
-        endpoint = f"{config.FLARESOLVERR_URL}/v1"
-        # Si el usuario ya puso /v1 en el config, evitamos duplicarlo
-        if config.FLARESOLVERR_URL.endswith("/v1"): endpoint = config.FLARESOLVERR_URL
-
+        endpoint = f"{config.FLARESOLVERR_URL}/v1" if not config.FLARESOLVERR_URL.endswith("/v1") else config.FLARESOLVERR_URL
         resp = requests.post(endpoint, headers=headers, json=data, timeout=65)
-        
-        if resp.status_code == 200:
-            res_json = resp.json()
-            if res_json.get("status") == "ok":
-                print("   [FLARESOLVERR] ¡Desafío resuelto! Extrayendo cookies...")
-                fs_cookies = res_json["solution"]["cookies"]
-                
-                # Adaptar formato de cookies para Playwright
-                playwright_cookies = []
-                for c in fs_cookies:
-                    cookie = {
-                        "name": c["name"],
-                        "value": c["value"],
-                        "domain": c["domain"],
-                        "path": c["path"]
-                    }
-                    playwright_cookies.append(cookie)
-                return playwright_cookies
-            else:
-                print(f"   [FLARESOLVERR] Error en respuesta: {res_json}")
-        else:
-            print(f"   [FLARESOLVERR] Error HTTP: {resp.status_code}")
-            
+        if resp.status_code == 200 and resp.json().get("status") == "ok":
+            print("   [FLARESOLVERR] ¡Éxito! Cookies obtenidas.")
+            fs_cookies = resp.json()["solution"]["cookies"]
+            return [{"name": c["name"], "value": c["value"], "domain": c["domain"], "path": c["path"]} for c in fs_cookies]
     except Exception as e:
-        print(f"   [FLARESOLVERR] Excepción conectando: {e}")
-        print("   [INFO] Asegúrate de que el contenedor de flaresolverr está corriendo y en la misma red.")
-    
+        print(f"   [FLARESOLVERR] Error: {e}")
     return None
 
-# --- LOGIN ---
+# --- LOGIN ADAPTADO AL HTML ---
 
 def realizar_login(page):
-    print("   [SCRAPER] Iniciando login...")
-    url_login = f"{URL_BASE}/login.php?do=login"
+    print("   [SCRAPER] Iniciando login (NavBar)...")
     
+    # Navegamos a la HOME directamente, ya que el login está en la barra superior (navbar)
     try:
-        page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
+        page.goto(URL_BASE, wait_until="domcontentloaded", timeout=60000)
         
-        try:
-            page.wait_for_selector(SELECTOR_USER, state="visible", timeout=5000)
-            page.fill(SELECTOR_USER, config.FORO_USER)
-            page.fill(SELECTOR_PASS, config.FORO_PASS)
-        except:
-            print("   [SCRAPER] Probando selector alternativo...")
-            page.fill(SELECTOR_USER_ALT, config.FORO_USER)
-            page.fill(SELECTOR_PASS_ALT, config.FORO_PASS)
+        # 1. Rellenar Usuario
+        print("   [LOGIN] Rellenando usuario...")
+        page.click(SELECTOR_USER) # Click para limpiar el placeholder si lo hubiera
+        page.fill(SELECTOR_USER, config.FORO_USER)
+        espera_humana()
+
+        # 2. Truco del Password (Hint -> Real)
+        print("   [LOGIN] Gestionando campo de contraseña...")
+        
+        # Verificamos si el campo "Hint" (falso) es visible
+        if page.locator(SELECTOR_PASS_HINT).is_visible():
+            # Hacemos click en el campo falso "Contraseña"
+            # Esto dispara el JS de la web que oculta el hint y muestra el password real
+            page.click(SELECTOR_PASS_HINT)
             
+            # Esperamos un momento a que el campo real se haga visible
+            try:
+                page.wait_for_selector(SELECTOR_PASS, state="visible", timeout=2000)
+            except:
+                print("   [WARN] El campo de password real tardó en aparecer.")
+
+        # Ahora rellenamos el campo real
+        page.fill(SELECTOR_PASS, config.FORO_PASS)
         espera_humana()
         
-        try: page.click(SELECTOR_LOGIN_BTN, timeout=5000)
-        except: page.keyboard.press("Enter")
+        # 3. Submit
+        print("   [LOGIN] Pulsando entrar...")
+        # Usamos el selector de la clase 'loginbutton' que vimos en tu HTML
+        page.click(SELECTOR_LOGIN_BTN)
         
         page.wait_for_load_state("domcontentloaded")
         
+        # Verificación
         if page.locator(SELECTOR_LOGOUT).is_visible(timeout=10000):
             print("   [SCRAPER] ✅ Login EXITOSO.")
             return True
@@ -134,12 +113,12 @@ def realizar_login(page):
         return False
 
     except Exception as e:
-        print(f"   [!] Excepción login: {e}")
+        print(f"   [!] Excepción crítica en login: {e}")
         try: page.screenshot(path=f"{config.DOWNLOAD_DIR}/debug_login_crash.png")
         except: pass
         return False
 
-# --- REPARACIÓN Y PROCESADO (Idénticos al anterior) ---
+# --- REPARACIÓN Y PROCESADO ---
 
 def reparar_hilos_rotos(page):
     rotas = db.obtener_descargas_sin_enlaces()
@@ -229,17 +208,13 @@ def procesar_foro(page, foro_id):
 # --- EJECUCIÓN ---
 
 def ejecutar(context):
-    
-    # 1. INTEGRACIÓN FLARESOLVERR
-    # Intentamos obtener cookies limpias ANTES de crear la página
     cookies_flare = obtener_cookies_flaresolverr()
     if cookies_flare:
-        print(f"   [FLARESOLVERR] Inyectando {len(cookies_flare)} cookies al navegador...")
+        print(f"   [FLARESOLVERR] Inyectando {len(cookies_flare)} cookies...")
         context.add_cookies(cookies_flare)
     
     page = context.new_page()
     try:
-        # 2. LOGIN (Ahora con cookies de FlareSolverr inyectadas)
         if not realizar_login(page):
             print("   [SCRAPER] ABORTANDO: Fallo login.")
             page.close()
