@@ -17,7 +17,7 @@ SELECTOR_LOGIN_BTN = ".loginbutton"
 SELECTOR_LOGOUT = "text=Finalizar sesión"    
 
 def espera_humana():
-    time.sleep(random.uniform(1.5, 3.0))
+    time.sleep(random.uniform(2.0, 4.0)) # Aumentamos un poco la espera
 
 def analizar_titulo(titulo_hilo):
     titulo_hilo = titulo_hilo.replace(":", " ") 
@@ -47,55 +47,81 @@ def extraer_enlaces_post(contenido_html):
 # --- FLARESOLVERR ---
 
 def obtener_cookies_flaresolverr():
-    if not config.FLARESOLVERR_URL: return None
-    print(f"   [FLARESOLVERR] Solicitando acceso a {URL_BASE}...")
+    if not config.FLARESOLVERR_URL: 
+        print("   [WARN] FLARESOLVERR_URL no está configurada.")
+        return None
+        
+    # Pedimos resolver DIRECTAMENTE la URL de login para asegurar el bypass ahí
+    target_url = f"{URL_BASE}/login.php?do=login"
+    print(f"   [FLARESOLVERR] Solicitando bypass para: {target_url}")
+    
     headers = {"Content-Type": "application/json"}
-    data = {"cmd": "request.get", "url": URL_BASE, "maxTimeout": 60000}
+    data = {
+        "cmd": "request.get",
+        "url": target_url,
+        "maxTimeout": 60000
+    }
+    
     try:
         endpoint = f"{config.FLARESOLVERR_URL}/v1" if not config.FLARESOLVERR_URL.endswith("/v1") else config.FLARESOLVERR_URL
-        resp = requests.post(endpoint, headers=headers, json=data, timeout=65)
-        if resp.status_code == 200 and resp.json().get("status") == "ok":
-            print("   [FLARESOLVERR] ¡Éxito! Cookies obtenidas.")
-            fs_cookies = resp.json()["solution"]["cookies"]
-            return [{"name": c["name"], "value": c["value"], "domain": c["domain"], "path": c["path"]} for c in fs_cookies]
+        resp = requests.post(endpoint, headers=headers, json=data, timeout=70)
+        
+        if resp.status_code == 200:
+            res_json = resp.json()
+            if res_json.get("status") == "ok":
+                print("   [FLARESOLVERR] ¡Desafío resuelto exitosamente!")
+                fs_cookies = res_json["solution"]["cookies"]
+                # Convertir formato
+                return [{"name": c["name"], "value": c["value"], "domain": c["domain"], "path": c["path"]} for c in fs_cookies]
+            else:
+                print(f"   [FLARESOLVERR] Fallo en respuesta: {res_json.get('message')}")
+        else:
+            print(f"   [FLARESOLVERR] Error HTTP {resp.status_code}")
+
     except Exception as e:
-        print(f"   [FLARESOLVERR] Error: {e}")
+        print(f"   [FLARESOLVERR] Error de conexión: {e}")
+        print("   [TIP] Verifica que el contenedor 'flaresolverr' está en la misma red Docker.")
+    
     return None
 
-# --- LOGIN (NAVBAR) ---
+# --- LOGIN ---
 
 def realizar_login(page):
-    print("   [SCRAPER] Iniciando login (Navbar)...")
+    print("   [SCRAPER] Navegando a la web...")
     
     try:
         page.goto(URL_BASE, wait_until="domcontentloaded", timeout=60000)
         
+        # CHEQUEO ANTI-CLOUDFLARE
+        titulo = page.title()
+        if "Just a moment" in titulo or "Cloudflare" in titulo:
+            print("   [CLOUDFLARE] ⚠️ ¡Detectada pantalla de bloqueo!")
+            page.screenshot(path=f"{config.LOG_DIR}/debug_cloudflare_stuck.png")
+            print("   [CLOUDFLARE] FlareSolverr no ha sido suficiente. Abortando este intento.")
+            return False
+
         # 1. USUARIO
-        print("   [LOGIN] Introduciendo usuario...")
+        print("   [LOGIN] Rellenando credenciales...")
         page.wait_for_selector(SELECTOR_USER, state="visible", timeout=10000)
         page.fill(SELECTOR_USER, "") 
         page.fill(SELECTOR_USER, config.FORO_USER)
         espera_humana()
 
-        # 2. CONTRASEÑA (Gestión del campo oculto)
-        print("   [LOGIN] Gestionando contraseña oculta...")
+        # 2. CONTRASEÑA
         if page.locator(SELECTOR_PASS_HINT).is_visible():
             page.click(SELECTOR_PASS_HINT)
-            try:
-                page.wait_for_selector(SELECTOR_PASS_REAL, state="visible", timeout=3000)
-            except:
-                print("   [WARN] El campo password real tardó en aparecer. Forzando escritura...")
+            try: page.wait_for_selector(SELECTOR_PASS_REAL, state="visible", timeout=3000)
+            except: pass
         
         page.fill(SELECTOR_PASS_REAL, config.FORO_PASS)
         espera_humana()
         
         # 3. RECORDARME
-        print("   [LOGIN] Marcando 'Recordarme'...")
         if page.locator(SELECTOR_CHECKBOX).is_visible():
             page.check(SELECTOR_CHECKBOX)
         
         # 4. SUBMIT
-        print("   [LOGIN] Pulsando botón entrar...")
+        print("   [LOGIN] Entrando...")
         page.locator(SELECTOR_LOGIN_BTN).first.click()
         
         page.wait_for_load_state("domcontentloaded")
@@ -105,12 +131,12 @@ def realizar_login(page):
             print("   [SCRAPER] ✅ Login EXITOSO.")
             return True
         
-        print(f"   [SCRAPER] ❌ Login FALLIDO. Guardando captura en {config.LOG_DIR}...")
+        print(f"   [SCRAPER] ❌ Login FALLIDO. Ver captura en logs.")
         page.screenshot(path=f"{config.LOG_DIR}/debug_login_fail.png")
         return False
 
     except Exception as e:
-        print(f"   [!] Excepción crítica en login: {e}")
+        print(f"   [!] Excepción login: {e}")
         try: page.screenshot(path=f"{config.LOG_DIR}/debug_login_crash.png")
         except: pass
         return False
@@ -130,8 +156,15 @@ def reparar_hilos_rotos(page):
         print(f"      [REPARAR] {hilo_id}: {titulo[:20]}...")
         try:
             page.goto(url_hilo, wait_until="domcontentloaded", timeout=60000)
+            
+            # Chequeo Cloudflare también aquí
+            if "Just a moment" in page.title():
+                print("      [SKIP] Bloqueo Cloudflare detectado.")
+                continue
+
             try: content_html = page.inner_html("div.postcontent", timeout=5000)
             except: content_html = page.content()
+            
             enlaces = extraer_enlaces_post(content_html)
             if enlaces:
                 str_enlaces = "\n".join(enlaces)
@@ -140,7 +173,7 @@ def reparar_hilos_rotos(page):
                 cur.close(); conn.close()
                 print(f"      [OK] Recuperados {len(enlaces)} enlaces.")
             else:
-                print(f"      [FAIL] Sin enlaces. Debug guardado en {config.LOG_DIR}.")
+                print(f"      [FAIL] Sin enlaces. Debug guardado.")
                 page.screenshot(path=f"{config.LOG_DIR}/debug_repair_fail_{hilo_id}.png")
             espera_humana()
         except Exception as e:
@@ -205,16 +238,20 @@ def procesar_foro(page, foro_id):
 # --- EJECUCIÓN ---
 
 def ejecutar(context):
+    
+    # 1. OBTENER COOKIES DE FLARESOLVERR (INTENTO DE BYPASS)
     cookies_flare = obtener_cookies_flaresolverr()
     if cookies_flare:
         print(f"   [FLARESOLVERR] Inyectando {len(cookies_flare)} cookies...")
         context.add_cookies(cookies_flare)
+    else:
+        print("   [WARN] No se pudieron obtener cookies de FlareSolverr. Intentando directo...")
     
     page = context.new_page()
     try:
-        # SIEMPRE LOGIN
+        # 2. LOGIN
         if not realizar_login(page):
-            print("   [SCRAPER] ABORTANDO: Fallo login.")
+            print("   [SCRAPER] ABORTANDO: Fallo login / Cloudflare.")
             page.close()
             return 
 

@@ -1,13 +1,39 @@
+import time
 import psycopg2
-from config import DB_CONFIG
+import config
+
+# Diccionario de conexión
+DB_CONFIG = {
+    "dbname": config.DB_NAME,
+    "user": config.DB_USER,
+    "password": config.DB_PASSWORD,
+    "host": config.DB_HOST,
+    "port": config.DB_PORT
+}
 
 def get_connection():
-    return psycopg2.connect(**DB_CONFIG)
+    """
+    Intenta conectar a la base de datos con reintentos infinitos.
+    Esto evita que el contenedor muera si la DB tarda en arrancar.
+    """
+    while True:
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            # Autocommit para evitar bloqueos
+            conn.autocommit = True
+            return conn
+        except psycopg2.OperationalError as e:
+            print(f"[DB] ⚠️ Esperando a la base de datos en '{config.DB_HOST}'... ({e})")
+            time.sleep(5)
+        except Exception as e:
+            print(f"[DB] ❌ Error crítico de conexión: {e}")
+            time.sleep(10)
 
-# --- FUNCIÓN "DUMMY" ---
 def init_db():
-    print("[DB] Modo: Tablas existentes. Omitiendo inicialización.")
-    pass 
+    print("[DB] Verificando conexión inicial...")
+    conn = get_connection()
+    conn.close()
+    print("[DB] Conexión establecida correctamente.")
 
 # --- FUNCIONES DE GESTIÓN ---
 
@@ -27,7 +53,6 @@ def buscar_descarga(cur, hilo_id):
 
 def insertar_descarga_hueco(conn, cur, peli_id, foro_id, hilo_id, formato, titulo_raw):
     try:
-        # CORRECCIÓN: Pasamos False (booleano) en lugar de 0 (entero)
         cur.execute("""
             INSERT INTO descargas (pelicula_id, foro_id, hilo_id, formato, titulo_original, descargado)
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -46,7 +71,6 @@ def marcar_como_descargado(did):
     try:
         conn = get_connection()
         cur = conn.cursor()
-        # CORRECCIÓN: Usamos TRUE explícito
         cur.execute("UPDATE descargas SET descargado = TRUE WHERE id = %s", (did,))
         conn.commit()
         cur.close()
@@ -57,10 +81,6 @@ def marcar_como_descargado(did):
         return False
 
 def obtener_pendientes(cur):
-    """
-    Obtiene las descargas pendientes.
-    CORRECCIÓN: WHERE d.descargado = FALSE (PostgreSQL estricto)
-    """
     query = """
         SELECT d.id, m.id as pid, m.titulo_base, d.formato, d.enlaces, d.titulo_original
         FROM descargas d
@@ -72,21 +92,15 @@ def obtener_pendientes(cur):
     cur.execute(query)
     resultados = cur.fetchall()
     
-    # DEBUG: Diagnóstico si no devuelve nada
     if not resultados:
-        # Check con FALSE
         cur.execute("SELECT count(*) FROM descargas WHERE descargado = FALSE")
-        pendientes_totales = cur.fetchone()[0]
-        if pendientes_totales > 0:
-            print(f"   [DB DEBUG] Hay {pendientes_totales} descargas en estado FALSE, pero fallan en el JOIN o no tienen enlaces.")
+        total = cur.fetchone()[0]
+        if total > 0:
+            pass # Silenciamos logs para no saturar
             
     return resultados
 
 def obtener_descargas_sin_enlaces():
-    """
-    Busca descargas rotas para reparar.
-    CORRECCIÓN: WHERE descargado = FALSE
-    """
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -109,28 +123,20 @@ def marcar_cascada_descargado(pid, formato_descargado):
     try:
         conn = get_connection()
         cur = conn.cursor()
-        
         target_formats = [formato_descargado]
-        
-        if formato_descargado == "x265":
-            target_formats.extend(["1080p", "m1080p"])
-        elif formato_descargado == "1080p":
-            target_formats.extend(["m1080p"])
+        if formato_descargado == "x265": target_formats.extend(["1080p", "m1080p"])
+        elif formato_descargado == "1080p": target_formats.extend(["m1080p"])
             
-        # CORRECCIÓN: Usamos TRUE explícito
         cur.execute("""
             UPDATE descargas 
             SET descargado = TRUE 
             WHERE pelicula_id = %s AND formato = ANY(%s)
         """, (pid, target_formats))
-        
         conn.commit()
         cur.close()
         conn.close()
         return True
-    except Exception as e:
-        print(f"[DB Error] Cascada fallida: {e}")
-        return False
+    except: return False
 
 def obtener_ultimas_novedades(limit=12):
     conn = get_connection()
@@ -145,9 +151,7 @@ def obtener_ultimas_novedades(limit=12):
         """
         cur.execute(query, (limit,))
         return cur.fetchall()
-    except Exception as e:
-        print(f"[DB Error] Al obtener novedades: {e}")
-        return []
+    except: return []
     finally:
         cur.close()
         conn.close()

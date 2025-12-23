@@ -18,7 +18,7 @@ if not os.path.exists(CONFIG_DIR):
     if not os.path.exists(CONFIG_DIR):
         os.makedirs(CONFIG_DIR)
 
-# --- NUEVO: DIRECTORIO DE LOGS ---
+# --- DIRECTORIO DE LOGS (Para capturas de error) ---
 LOG_DIR = os.path.join(CONFIG_DIR, "log")
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
@@ -41,11 +41,12 @@ DEBRID_PRIORIDAD = os.getenv("DEBRID_PRIORIDAD", "RD")
 # --- AJUSTES DE EXTRACCIÓN ---
 RAR_PASSWORD = os.getenv("RAR_PASSWORD", "descargasdd")
 
-# Base de Datos (POSTGRESQL)
-DB_HOST = os.getenv("POSTGRES_HOST", "db") 
-DB_NAME = os.getenv("POSTGRES_DB", "bot_db")
-DB_USER = os.getenv("POSTGRES_USER", "postgres")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+# --- BASE DE DATOS (CONFIGURACIÓN CORREGIDA) ---
+# Aquí ponemos 'PGroonga17' como valor por defecto si no se pasa la variable de entorno
+DB_HOST = os.getenv("POSTGRES_HOST", "PGroonga17") 
+DB_NAME = os.getenv("POSTGRES_DB", "descargasdd")
+DB_USER = os.getenv("POSTGRES_USER", "descargasdd")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "descargasdd")
 DB_PORT = os.getenv("POSTGRES_PORT", "5432")
 
 # Diccionario de conexión para psycopg2
