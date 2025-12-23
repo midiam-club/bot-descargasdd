@@ -5,15 +5,14 @@ import config
 import database as db
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-# --- CONSTANTES ---
 URL_BASE = "https://descargasdd.org"
 
-# SELECTORES vBulletin 4
+# SELECTORES (Incluye fallback por si vBulletin cambia el ID)
 SELECTOR_LOGOUT = "text=Finalizar sesión"
 SELECTOR_USER = "input[name='vb_login_username']"
 SELECTOR_PASS = "input[name='vb_login_password']"
 SELECTOR_LOGIN_BTN = "input[value='Iniciar sesión']"
-# Fallback genérico
+# Fallback genérico estándar HTML
 SELECTOR_USER_ALT = "input[name='username']"
 SELECTOR_PASS_ALT = "input[name='password']"
 
@@ -45,79 +44,71 @@ def extraer_enlaces_post(contenido_html):
                 break
     return list(set(enlaces))
 
-# --- SESIÓN ---
-
-def validar_sesion(page):
-    # ESTA FUNCIÓN SE QUEDA AQUÍ PERO NO LA USAREMOS POR AHORA
-    print("   [SCRAPER] Verificando sesión...")
-    try:
-        page.goto(URL_BASE, timeout=60000, wait_until="domcontentloaded")
-        if page.locator(SELECTOR_LOGOUT).is_visible(timeout=5000):
-            print("   [SCRAPER] ✅ Sesión VÁLIDA.")
-            return True
-        print("   [SCRAPER] ⚠️ Sesión NO VÁLIDA.")
-        return False
-    except: return False
+# --- LOGIN OBLIGATORIO ---
 
 def realizar_login(page):
-    print("   [SCRAPER] Intentando login...")
+    print("   [SCRAPER] Iniciando login (Sesión limpia)...")
     url_login = f"{URL_BASE}/login.php?do=login"
     try:
-        page.goto(url_login, wait_until="domcontentloaded")
+        page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
         
+        # Estrategia de rellenado robusta
         try:
+            # Intento 1: Selector específico de vBulletin
             page.wait_for_selector(SELECTOR_USER, state="visible", timeout=5000)
             page.fill(SELECTOR_USER, config.FORO_USER)
             page.fill(SELECTOR_PASS, config.FORO_PASS)
         except:
+            print("   [SCRAPER] Falló selector vBulletin, probando genérico...")
+            # Intento 2: Selector genérico 'username' (el que dio timeout en tu log anterior)
+            # Si este también falla, saltará la excepción general y hará screenshot.
             page.fill(SELECTOR_USER_ALT, config.FORO_USER)
             page.fill(SELECTOR_PASS_ALT, config.FORO_PASS)
             
         espera_humana()
         
+        # Enviar formulario
         try: page.click(SELECTOR_LOGIN_BTN, timeout=5000)
         except: page.keyboard.press("Enter")
         
         page.wait_for_load_state("domcontentloaded")
         
+        # Verificación final
         if page.locator(SELECTOR_LOGOUT).is_visible(timeout=10000):
             print("   [SCRAPER] ✅ Login EXITOSO.")
             return True
         
-        print("   [SCRAPER] ❌ Login FALLIDO. Generando captura...")
+        print("   [SCRAPER] ❌ Login FALLIDO. Generando captura de debug...")
         page.screenshot(path=f"{config.DOWNLOAD_DIR}/debug_login_fail.png")
         return False
+
     except Exception as e:
-        print(f"   [!] Excepción login: {e}")
+        print(f"   [!] Excepción crítica en login: {e}")
+        try: page.screenshot(path=f"{config.DOWNLOAD_DIR}/debug_login_crash.png")
+        except: pass
         return False
 
 # --- REPARACIÓN ---
 
 def reparar_hilos_rotos(page):
     rotas = db.obtener_descargas_sin_enlaces()
-    if not rotas:
-        return
+    if not rotas: return
 
-    print(f"\n   [REPARACIÓN] Detectadas {len(rotas)} descargas sin enlaces. Intentando reparar...")
+    print(f"\n   [REPARACIÓN] Detectadas {len(rotas)} descargas rotas. Reparando...")
     
     for item in rotas:
         hilo_id = item[0]
         titulo = item[1] or "Sin titulo"
         
-        if not hilo_id or hilo_id == '0':
-            print(f"      [SKIP] ID inválido: {hilo_id}")
-            continue
+        if not hilo_id or hilo_id == '0': continue
 
         url_hilo = f"{URL_BASE}/showthread.php?t={hilo_id}"
-        print(f"      [REPARAR] Visitando hilo {hilo_id}: {titulo[:30]}...")
+        print(f"      [REPARAR] {hilo_id}: {titulo[:20]}...")
         
         try:
             page.goto(url_hilo, wait_until="domcontentloaded", timeout=60000)
-            
-            try:
-                content_html = page.inner_html("div.postcontent", timeout=5000)
-            except:
-                content_html = page.content()
+            try: content_html = page.inner_html("div.postcontent", timeout=5000)
+            except: content_html = page.content()
 
             enlaces = extraer_enlaces_post(content_html)
             
@@ -128,17 +119,16 @@ def reparar_hilos_rotos(page):
                 db.actualizar_enlaces(conn, cur, hilo_id, str_enlaces)
                 cur.close()
                 conn.close()
-                print(f"      [OK] ¡Reparado! {len(enlaces)} enlaces encontrados.")
+                print(f"      [OK] Recuperados {len(enlaces)} enlaces.")
             else:
-                print("      [FAIL] Siguen sin aparecer enlaces. Guardando captura de debug...")
+                print("      [FAIL] Sin enlaces. Debug guardado.")
                 page.screenshot(path=f"{config.DOWNLOAD_DIR}/debug_repair_fail_{hilo_id}.png")
             
             espera_humana()
-            
         except Exception as e:
-            print(f"      [!] Error reparando {hilo_id}: {e}")
+            print(f"      [ERROR] Reparación fallida: {e}")
 
-# --- PROCESADO NORMAL ---
+# --- PROCESADO ---
 
 def procesar_hilo(page, url_hilo, titulo_raw, foro_id):
     try:
@@ -154,17 +144,14 @@ def procesar_hilo(page, url_hilo, titulo_raw, foro_id):
         hilo_id = match_id.group(1) if match_id else "0"
         
         descarga_existente = db.buscar_descarga(cur, hilo_id)
-        
         if descarga_existente and descarga_existente[0] and len(descarga_existente[0]) > 10:
-            cur.close()
-            conn.close()
-            return
+            cur.close(); conn.close(); return
 
         meta = db.buscar_pelicula_meta(cur, titulo_base)
         if meta: peli_id = meta[0]
         else: peli_id = db.insertar_pelicula_meta(conn, cur, titulo_base)
 
-        print(f"      [NUEVO] Procesando: {titulo_base}")
+        print(f"      [NUEVO] {titulo_base}")
         page.goto(url_hilo, wait_until="domcontentloaded")
         
         content_html = page.inner_html("div.postcontent", timeout=5000)
@@ -190,7 +177,7 @@ def procesar_foro(page, foro_id):
     try:
         page.goto(f"{URL_BASE}/forumdisplay.php?f={foro_id}&order=desc", wait_until="domcontentloaded")
         hilos = page.locator("li.threadbit").all()
-        print(f"   [DEBUG] Encontrados {len(hilos)} temas en portada.")
+        print(f"   [DEBUG] Encontrados {len(hilos)} temas.")
         
         count = 0
         for hilo in hilos:
@@ -199,11 +186,9 @@ def procesar_foro(page, foro_id):
                 if not hilo.is_visible(): continue
                 el = hilo.locator("a.title")
                 if el.count() == 0: continue
-                
                 txt = el.inner_text().strip()
-                href = el.get_attribute("href")
-                
                 if "adhierido" in txt.lower(): continue
+                href = el.get_attribute("href")
                 
                 procesar_hilo(page, f"{URL_BASE}/{href}", txt, foro_id)
                 count += 1
@@ -211,22 +196,19 @@ def procesar_foro(page, foro_id):
     except Exception as e:
         print(f"   [!] Error foro {foro_id}: {e}")
 
-# --- MAIN ---
+# --- EJECUCIÓN PRINCIPAL ---
 
 def ejecutar(context):
     page = context.new_page()
     try:
-        # --- MODIFICADO: SIEMPRE HACEMOS LOGIN, IGNORAMOS SI HAY SESIÓN ---
-        # if not validar_sesion(page):
+        # SIEMPRE LOGIN
         if not realizar_login(page):
             print("   [SCRAPER] ABORTANDO: Fallo login.")
             page.close()
             return 
 
-        # 2. REPARAR LO ROTO (Prioridad)
         reparar_hilos_rotos(page)
 
-        # 3. BUSCAR NUEVO
         if hasattr(config, 'FOROS_PROCESAR'):
             for fid in config.FOROS_PROCESAR:
                 procesar_foro(page, fid)

@@ -14,26 +14,15 @@ from monitor import state
 from urllib.parse import urlparse
 from utils import sanitizar_nombre 
 
-# --- SESIÓN ---
+# --- NAVEGADOR (LIMPIO, SIN SESIÓN PREVIA) ---
 
 def obtener_contexto_navegador(browser):
-    if os.path.exists(config.SESSION_FILE):
-        print(f"   [SESIÓN] Cargando cookies desde: {config.SESSION_FILE}")
-        try:
-            return browser.new_context(storage_state=config.SESSION_FILE)
-        except Exception as e:
-            print(f"   [!] Error cargando sesión: {e}")
-            return browser.new_context(user_agent=config.DEFAULT_USER_AGENT)
-    else:
-        print("   [SESIÓN] Nueva sesión (User-Agent legítimo).")
-        return browser.new_context(user_agent=config.DEFAULT_USER_AGENT)
-
-def guardar_sesion(context):
-    try: 
-        context.storage_state(path=config.SESSION_FILE)
-        print(f"   [SESIÓN] Cookies guardadas en: {config.SESSION_FILE}")
-    except Exception as e: 
-        print(f"   [!] Error guardando sesión: {e}")
+    """
+    Crea un contexto de navegador totalmente nuevo y limpio.
+    No carga cookies ni sesiones anteriores.
+    """
+    print("   [NAVEGADOR] Iniciando sesión limpia (Incógnito)...")
+    return browser.new_context(user_agent=config.DEFAULT_USER_AGENT)
 
 # --- UTILIDADES ---
 
@@ -166,52 +155,36 @@ def worker_descarga_pelicula(pid, datos_peli):
 
 def flujo_descargas(context):
     
-    print("\n[*] --- FASE 1: BUSCANDO NOVEDADES ---")
+    print("\n[*] --- FASE 1: SCRAPING Y REPARACIÓN ---")
     try:
+        # Ya no hay guardado de sesión, solo ejecución directa
         scraper.ejecutar(context) 
-        print("[*] Scraping finalizado. Guardando sesión...")
-        guardar_sesion(context)
     except Exception as e:
-        print(f"[!] Error durante el scraping: {e}")
-        guardar_sesion(context)
+        print(f"[!] Error Scraper: {e}")
 
-    # 2. DASHBOARD UPDATE
-    ultimas_novedades = db.obtener_ultimas_novedades(12)
-    detected_list = []
-    if ultimas_novedades:
-        for r in ultimas_novedades:
-            titulo_base = r[0]
-            fmt_raw = r[1]
-            match_anio = re.search(r'\((\d{4})\)', titulo_base)
-            anio = match_anio.group(1) if match_anio else "???? "
-            titulo_clean = titulo_base.replace(f"({anio})", "").strip()
-            titulo_clean = sanitizar_nombre(titulo_clean)
-            detected_list.append({"titulo": titulo_clean, "anio": anio, "formato": fmt_raw})
-    state.set_detected_movies(detected_list)
+    # Actualizar Dashboard
+    ultimas = db.obtener_ultimas_novedades(12)
+    det = []
+    if ultimas:
+        for r in ultimas:
+            t = sanitizar_nombre(r[0])
+            det.append({"titulo": t, "anio": "", "formato": r[1]})
+    state.set_detected_movies(det)
 
-    # 3. PROCESAR COLA
-    print("[*] --- FASE 2: GESTIÓN DE DESCARGAS ---")
+    print("[*] --- FASE 2: GESTOR DE DESCARGAS ---")
     conn = db.get_connection()
     cur = conn.cursor()
-    
-    pendientes_raw = db.obtener_pendientes(cur)
-    
+    pendientes = db.obtener_pendientes(cur)
     cur.close()
     conn.close()
 
-    if not pendientes_raw:
-        print("[*] No se encontraron descargas pendientes listas para bajar.")
+    if not pendientes:
+        print("[*] No hay descargas listas (con enlaces).")
         return
 
     data_map = {}
-    for r in pendientes_raw:
-        did = r[0]
-        pid = r[1]
-        tit = r[2]
-        fmt = r[3]
-        lnk = r[4]
-        torig = r[5]
-
+    for r in pendientes:
+        did, pid, tit, fmt, lnk, torig = r
         if pid not in data_map: 
             data_map[pid] = {"titulo": tit, "variantes": []}
         data_map[pid]["variantes"].append({
@@ -221,16 +194,15 @@ def flujo_descargas(context):
     cola_de_trabajo = list(data_map.items())
     hilos_activos = []
 
-    print(f"[*] ¡Detectadas {len(cola_de_trabajo)} películas pendientes! Iniciando gestores...")
+    print(f"[*] Procesando {len(cola_de_trabajo)} películas...")
 
     while cola_de_trabajo or hilos_activos:
         hilos_activos = [t for t in hilos_activos if t.is_alive()]
-        limite_gestores_pelicula = 5 
         
-        while len(hilos_activos) < limite_gestores_pelicula and cola_de_trabajo:
+        while len(hilos_activos) < config.MAX_WORKERS and cola_de_trabajo:
             pid, datos = cola_de_trabajo.pop(0)
-            print(f"[Gestor] Lanzando hilo para: {datos['titulo']}")
-            t = threading.Thread(target=worker_wrapper, args=(pid, datos))
+            print(f"[Gestor] Iniciando: {datos['titulo']}")
+            t = threading.Thread(target=worker_wrapper, args=(pid, datos)) 
             t.daemon = True
             t.start()
             hilos_activos.append(t)
@@ -240,11 +212,11 @@ def flujo_descargas(context):
 def main():
     db.init_db()
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=True) 
+        # Contexto siempre limpio
         context = obtener_contexto_navegador(browser)
-        print("[*] Bot iniciado. Iniciando ciclo completo...")
         flujo_descargas(context)
-        guardar_sesion(context)
+        # Eliminado guardar_sesion(context) al final
         browser.close()
 
 if __name__ == "__main__":
