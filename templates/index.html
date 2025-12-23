@@ -13,6 +13,17 @@
         ::-webkit-scrollbar-track { background: #1f2937; }
         ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        /* Animación para la barra de descompresión */
+        @keyframes stripes {
+            from { background-position: 0 0; }
+            to { background-position: 20px 20px; }
+        }
+        .animate-stripes {
+            background-image: linear-gradient(45deg, rgba(255, 255, 255, 0.15) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.15) 75%, transparent 75%, transparent);
+            background-size: 20px 20px;
+            animation: stripes 1s linear infinite;
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white font-sans h-screen overflow-hidden" x-data="downloader()">
@@ -20,9 +31,8 @@
     <div class="flex h-full">
         
         <aside class="w-80 bg-gray-800 border-r border-gray-700 flex flex-col p-6 gap-8 shadow-2xl z-20">
-            
             <div class="flex justify-center">
-                <img src="/static/sidebar-logo.png" alt="DescargasDD Downloader Logo" class="h-12">
+                <img src="/static/sidebar-logo.png" alt="Logo" class="h-12">
             </div>
 
             <div class="bg-gray-900/50 p-4 rounded-xl border border-gray-700 text-center">
@@ -55,26 +65,18 @@
                 <div class="space-y-2">
                     <div class="flex justify-between items-center">
                         <label class="text-xs font-semibold text-gray-300 uppercase">Límite Global</label>
-                        <button 
-                            @click="toggleLimit"
-                            class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none"
-                            :class="settings.enabled ? 'bg-blue-600' : 'bg-gray-600'"
-                        >
-                            <span class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform"
-                                  :class="settings.enabled ? 'translate-x-5' : 'translate-x-1'"></span>
+                        <button @click="toggleLimit" class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none" :class="settings.enabled ? 'bg-blue-600' : 'bg-gray-600'">
+                            <span class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform" :class="settings.enabled ? 'translate-x-5' : 'translate-x-1'"></span>
                         </button>
                     </div>
                     <div class="flex items-center gap-2">
-                        <input type="number" step="0.5" min="0" x-model="settings.limit"
-                               class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-center text-white outline-none focus:border-blue-500 transition">
+                        <input type="number" step="0.5" min="0" x-model="settings.limit" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-center text-white outline-none focus:border-blue-500 transition">
                         <button @click="saveLimit" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded text-sm font-bold transition">OK</button>
                     </div>
                 </div>
             </div>
 
-            <div class="text-center text-[10px] text-gray-600 mt-auto">
-                v2.6 &bull; Dockerized
-            </div>
+            <div class="text-center text-[10px] text-gray-600 mt-auto">v2.7 &bull; Dockerized</div>
         </aside>
 
         <main class="flex-1 flex flex-col overflow-hidden bg-gray-900 relative">
@@ -85,18 +87,15 @@
                     <h2 class="text-xl font-bold mb-4 flex items-center gap-2 text-pink-400">
                         <span>🚀</span> Novedades Detectadas en Foro
                     </h2>
-                    
                     <div x-show="detected.length === 0" class="text-gray-500 italic text-sm bg-gray-800/50 p-4 rounded border border-gray-800 border-dashed">
                         No hay novedades pendientes de procesar.
                     </div>
-
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         <template x-for="(mov, idx) in detected" :key="idx">
                             <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-gray-600 transition shadow-lg group">
                                 <div class="flex justify-between items-start mb-2">
                                     <span class="text-xs font-bold text-gray-500" x-text="mov.anio"></span>
-                                    <span class="px-2 py-0.5 rounded bg-pink-900/30 border border-pink-500/30 text-pink-300 text-[10px] font-bold uppercase" 
-                                          x-text="mov.formato"></span>
+                                    <span class="px-2 py-0.5 rounded bg-pink-900/30 border border-pink-500/30 text-pink-300 text-[10px] font-bold uppercase" x-text="mov.formato"></span>
                                 </div>
                                 <h3 class="font-bold text-gray-200 truncate group-hover:text-white transition" x-text="mov.titulo"></h3>
                                 <div class="mt-3 w-full bg-gray-700 h-1 rounded-full overflow-hidden">
@@ -130,33 +129,51 @@
                                         </template>
                                     </div>
                                     <div class="text-right">
-                                        <span class="text-lg font-mono text-purple-300 font-bold" x-text="getMovieStats(files).speed + ' MB/s'"></span>
+                                        <template x-if="!getMovieStats(files).isExtracting">
+                                            <span class="text-lg font-mono text-purple-300 font-bold" x-text="getMovieStats(files).speed + ' MB/s'"></span>
+                                        </template>
+                                        <template x-if="getMovieStats(files).isExtracting">
+                                            <span class="text-lg font-mono text-orange-400 font-bold animate-pulse">UNRAR</span>
+                                        </template>
                                     </div>
                                 </div>
 
                                 <div class="mb-6 relative z-10 bg-gray-900/50 p-3 rounded-lg border border-gray-700/50">
+                                    
                                     <div class="flex justify-between text-xs text-gray-400 mb-2">
-                                        <span class="uppercase tracking-wider font-semibold text-purple-400">Progreso Global</span>
+                                        
+                                        <template x-if="getMovieStats(files).isExtracting">
+                                            <span class="uppercase tracking-wider font-bold text-orange-400">Descomprimiendo</span>
+                                        </template>
+                                        <template x-if="!getMovieStats(files).isExtracting">
+                                            <span class="uppercase tracking-wider font-semibold text-purple-400">Progreso Descarga</span>
+                                        </template>
+
                                         <span class="font-mono" x-text="getMovieStats(files).text"></span>
                                     </div>
+
                                     <div class="w-full bg-gray-900 rounded-full h-4 relative overflow-hidden border border-gray-600">
-                                        <div class="bg-gradient-to-r from-purple-600 to-blue-500 h-4 rounded-full transition-all duration-500 ease-out shadow-[0_0_15px_rgba(147,51,234,0.3)]"
+                                        <div x-show="!getMovieStats(files).isExtracting"
+                                             class="bg-gradient-to-r from-purple-600 to-blue-500 h-4 rounded-full transition-all duration-500 ease-out shadow-[0_0_15px_rgba(147,51,234,0.3)]"
+                                             :style="`width: ${getMovieStats(files).pct}%`"></div>
+                                        
+                                        <div x-show="getMovieStats(files).isExtracting"
+                                             class="bg-orange-500 h-4 rounded-full transition-all duration-300 ease-out shadow-[0_0_15px_rgba(249,115,22,0.5)] animate-stripes"
                                              :style="`width: ${getMovieStats(files).pct}%`"></div>
                                     </div>
                                 </div>
                                 
                                 <div class="space-y-2 pl-2 border-l-2 border-gray-700 relative z-10">
                                     <template x-for="(data, filename) in filterFiles(files)" :key="filename">
-                                        <div class="bg-gray-900/60 p-3 rounded-md border border-gray-700/50 flex flex-col gap-2 transition hover:bg-gray-900"
+                                        <div x-show="filename !== '📦 Descomprimiendo...'" 
+                                             class="bg-gray-900/60 p-3 rounded-md border border-gray-700/50 flex flex-col gap-2 transition hover:bg-gray-900"
                                              :class="{
-                                                'border-orange-500/30': data.status === 'extracting',
                                                 'border-green-500/30': data.status === 'completed'
                                              }">
                                             
                                             <div class="flex justify-between text-xs items-center">
                                                 <div class="flex items-center gap-3 truncate max-w-[70%]">
                                                     <div class="w-5 flex justify-center">
-                                                        <span x-show="data.status === 'extracting'" class="animate-bounce">📦</span>
                                                         <span x-show="data.status === 'downloading'">⬇️</span>
                                                         <span x-show="data.status === 'completed'">✅</span>
                                                     </div>
@@ -165,7 +182,7 @@
                                                           :class="data.status === 'completed' ? 'line-through opacity-50' : ''"
                                                           x-text="filename"></span>
                                                     
-                                                    <div x-show="data.status !== 'extracting'" class="hidden sm:flex items-center gap-2 opacity-70 ml-2">
+                                                    <div class="hidden sm:flex items-center gap-2 opacity-70 ml-2">
                                                         <div x-show="data.host" class="flex items-center gap-1">
                                                             <span class="text-[10px] text-gray-500" x-text="data.host"></span>
                                                             <span class="text-[10px] font-bold bg-gray-800 px-1 rounded text-blue-300" x-text="data.debrid"></span>
@@ -176,15 +193,13 @@
 
                                                 <div class="text-right min-w-[80px]">
                                                     <span x-show="data.status === 'downloading'" class="text-green-400 font-mono" x-text="data.speed + ' MB/s'"></span>
-                                                    <span x-show="data.status === 'extracting'" class="text-orange-400 font-bold animate-pulse">EXTRAYENDO</span>
-                                                    <span x-show="data.status === 'completed'" class="text-gray-500 font-semibold">ESPERANDO</span>
+                                                    <span x-show="data.status === 'completed'" class="text-gray-500 font-semibold">LISTO</span>
                                                 </div>
                                             </div>
                                             
                                             <div class="w-full bg-gray-800 rounded-full h-1 overflow-hidden">
                                                 <div class="h-1 rounded-full transition-all duration-300"
                                                      :class="{
-                                                         'bg-orange-500': data.status === 'extracting',
                                                          'bg-blue-500': data.status === 'downloading',
                                                          'bg-green-500': data.status === 'completed'
                                                      }"
@@ -197,27 +212,20 @@
                         </template>
                     </div>
                 </section>
-
+                
                 <hr class="border-gray-800">
 
                 <section>
                     <h2 class="text-xl font-bold mb-4 flex items-center gap-2 text-purple-400">
                         <span>📚</span> Historial de Sesión
                     </h2>
-
-                    <div x-show="Object.keys(history).length === 0" class="text-gray-500 italic text-sm">
-                        Historial vacío.
-                    </div>
-
+                    <div x-show="Object.keys(history).length === 0" class="text-gray-500 italic text-sm">Historial vacío.</div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
                         <template x-for="(files, peli) in history" :key="peli">
                             <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden shadow-sm hover:shadow-md transition">
                                 <div class="bg-gray-750 px-4 py-3 border-b border-gray-700 flex justify-between items-center bg-gray-900/30">
                                     <h3 class="font-bold text-gray-300 truncate w-2/3 text-sm" x-text="peli"></h3>
-                                    <div x-show="completed.includes(peli)" 
-                                         class="flex items-center gap-1 bg-green-900/30 border border-green-700/50 px-2 py-0.5 rounded text-green-400 text-[10px] font-bold">
-                                        <span>COMPLETO</span>
-                                    </div>
+                                    <div x-show="completed.includes(peli)" class="flex items-center gap-1 bg-green-900/30 border border-green-700/50 px-2 py-0.5 rounded text-green-400 text-[10px] font-bold"><span>COMPLETO</span></div>
                                 </div>
                                 <div class="p-3 max-h-40 overflow-y-auto">
                                     <table class="w-full text-xs text-left text-gray-400">
@@ -225,7 +233,7 @@
                                             <tr>
                                                 <th class="px-2 py-1">Archivo</th>
                                                 <th class="px-2 py-1">Tamaño</th>
-                                                <th class="px-2 py-1 text-center">Velocidad</th>
+                                                <th class="px-2 py-1 text-center">Vel</th>
                                                 <th class="px-2 py-1 text-right">Tiempo</th>
                                             </tr>
                                         </thead>
@@ -269,9 +277,7 @@
 
                 formatSize(mb) {
                     if (!mb) return '0 MB';
-                    if (mb >= 1024) {
-                        return (mb / 1024).toFixed(2) + ' GB';
-                    }
+                    if (mb >= 1024) return (mb / 1024).toFixed(2) + ' GB';
                     return mb.toFixed(1) + ' MB';
                 },
 
@@ -289,14 +295,32 @@
                     let partialProgressSum = 0;
                     let downloadedBytes = 0;
                     
+                    // --- DETECCIÓN DE EXTRACCIÓN ---
+                    // Buscamos si existe la key especial de descompresión
+                    let extractionEntry = files["📦 Descomprimiendo..."];
+                    let isExtracting = !!extractionEntry;
+                    
                     Object.entries(files).forEach(([key, f]) => {
                         if (key === '__meta__') return;
+                        if (key === '📦 Descomprimiendo...') return; // No sumar al download total
+                        
                         downloadedBytes += f.downloaded;
                         if(f.status === 'downloading') totalSpeed += f.speed;
                         if (f.status === 'completed') completedParts += 1;
                         else if (f.status === 'downloading') partialProgressSum += (f.progress / 100);
                     });
 
+                    // SI ESTÁ DESCOMPRIMIENDO, LA BARRA MUESTRA EL PROGRESO DE UNRAR
+                    if (isExtracting) {
+                        return {
+                            pct: extractionEntry.progress,
+                            speed: 0,
+                            isExtracting: true,
+                            text: `Extrayendo: ${extractionEntry.progress}%`
+                        };
+                    }
+
+                    // SI NO, MUESTRA EL DE DESCARGA NORMAL
                     let rawPercent = ((completedParts + partialProgressSum) / totalExpected) * 100;
                     if (rawPercent > 100) rawPercent = 100;
                     const downloadedGB = (downloadedBytes / 1024).toFixed(2);
@@ -304,6 +328,7 @@
                     return {
                         pct: rawPercent.toFixed(1),
                         speed: totalSpeed.toFixed(1),
+                        isExtracting: false,
                         text: `${downloadedGB} GB | ${completedParts}/${totalExpected} Partes`
                     };
                 },

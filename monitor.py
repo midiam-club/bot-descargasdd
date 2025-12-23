@@ -33,9 +33,12 @@ class DownloadMonitor:
             self.detected_movies = movies_list
 
     # --- GESTIÓN DE ESTADO FINAL ---
-    def mark_completed(self, titulo):
+    def mark_completed(self, titulo, formato=None):
+        """Marca un título (y su formato) como totalmente finalizado"""
         with self._lock:
-            self.completed_titles.add(titulo)
+            # Creamos una clave única para que el flag verde salga en la tarjeta correcta del historial
+            key = f"{titulo} [{formato}]" if formato else titulo
+            self.completed_titles.add(key)
 
     # --- SEMÁFORO ---
     def acquire_download_slot(self):
@@ -72,21 +75,25 @@ class DownloadMonitor:
                 "progress": round(porcentaje, 1),
                 "speed": round(velocidad_mb, 2),
                 "downloaded": round(leido_bytes / (1024*1024), 2),
-                "total": round(total_bytes / (1024*1024), 2), # Esto ya está en MB
+                "total": round(total_bytes / (1024*1024), 2),
                 "status": "downloading",
                 "host": host_final,
                 "debrid": debrid_final
             }
             self._recalculate_total_speed()
 
-    def finish_download(self, pelicula, archivo, avg_speed, duration_str):
+    def finish_download(self, pelicula, archivo, avg_speed, duration_str, formato=None):
+        """
+        Mueve la descarga al historial.
+        Ahora usa 'formato' para separar entradas en el historial (Ej: 'Matrix [1080p]')
+        """
         with self._lock:
-            # 1. Recuperar tamaño final antes de nada
+            # 1. Recuperar tamaño final
             final_size_mb = 0
             if pelicula in self.active_downloads and archivo in self.active_downloads[pelicula]:
                 final_size_mb = self.active_downloads[pelicula][archivo].get("total", 0)
 
-            # 2. Actualizar estado visual (sin borrar)
+            # 2. Actualizar estado visual (sin borrar de activas aún)
             if pelicula in self.active_downloads and archivo in self.active_downloads[pelicula]:
                 file_data = self.active_downloads[pelicula][archivo]
                 file_data["status"] = "completed"
@@ -94,19 +101,23 @@ class DownloadMonitor:
                 file_data["speed"] = 0.0
                 file_data["downloaded"] = file_data["total"] 
             
-            # 3. Guardar en Historial con el TAMAÑO incluido
-            if pelicula not in self.history:
-                self.history[pelicula] = []
+            # 3. Guardar en Historial CON CLAVE COMPUESTA
+            # Intentamos recuperar formato de los argumentos o del diccionario guardado
+            fmt_real = formato if formato else self.movie_formats.get(pelicula, "")
             
-            fmt = self.movie_formats.get(pelicula, "")
+            # Clave: "Titulo [Formato]" para separar en el frontend
+            history_key = f"{pelicula} [{fmt_real}]" if fmt_real else pelicula
 
-            self.history[pelicula].append({
+            if history_key not in self.history:
+                self.history[history_key] = []
+            
+            self.history[history_key].append({
                 "archivo": archivo,
                 "avg_speed": round(avg_speed, 2),
                 "duration": duration_str,
                 "timestamp": time.strftime("%H:%M:%S"),
-                "formato": fmt,
-                "size": final_size_mb  # <--- NUEVO CAMPO
+                "formato": fmt_real,
+                "size": final_size_mb
             })
             self._recalculate_total_speed()
 

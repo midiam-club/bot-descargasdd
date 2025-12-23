@@ -8,12 +8,11 @@ def get_connection():
 def init_db():
     """
     Función vacía para satisfacer la llamada en main.py.
-    No crea tablas ni altera la base de datos existente.
     """
     print("[DB] Modo: Tablas existentes. Omitiendo inicialización.")
     pass 
 
-# --- FUNCIONES DE GESTIÓN ---
+# --- FUNCIONES DE GESTIÓN (Tus funciones originales) ---
 
 def buscar_pelicula_meta(cur, titulo_limpio):
     cur.execute("SELECT id FROM peliculas_meta WHERE LOWER(titulo_base)=LOWER(%s)", (titulo_limpio,))
@@ -59,10 +58,7 @@ def marcar_como_descargado(did):
         return False
 
 def obtener_pendientes(cur):
-    """
-    Obtiene las descargas pendientes.
-    Retorna: (did, pid, titulo_base, formato, enlaces, titulo_original)
-    """
+    # Tu query original
     cur.execute("""
         SELECT d.id, m.id as pid, m.titulo_base, d.formato, d.enlaces, d.titulo_original
         FROM descargas d
@@ -97,11 +93,11 @@ def marcar_cascada_descargado(pid, formato_descargado):
         print(f"[DB Error] Cascada fallida: {e}")
         return False
 
-# --- NUEVA FUNCIÓN PARA EL DASHBOARD ---
+# --- NUEVA FUNCIÓN PARA EL DASHBOARD (ADAPTADA) ---
 def obtener_ultimas_novedades(limit=12):
     """
-    Obtiene las últimas N entradas en la tabla descargas (ordenadas por ID descendente).
-    Devuelve: (titulo_base, formato, titulo_original)
+    Obtiene las últimas N entradas combinando descargas y peliculas_meta.
+    Ordenadas por ID de descarga descendente (las más recientes añadidas).
     """
     conn = get_connection()
     cur = conn.cursor()

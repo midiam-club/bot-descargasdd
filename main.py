@@ -6,12 +6,13 @@ import config
 import database as db
 import debrid
 import post_procesado as post
-import scraper # <--- IMPORTANTE: Debe existir scraper.py
+import scraper 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from playwright.sync_api import sync_playwright
 from web_server import run_web_server
 from monitor import state
 from urllib.parse import urlparse
+from utils import sanitizar_nombre 
 
 # --- SESIÓN ---
 
@@ -101,13 +102,14 @@ def intentar_descarga(variante, titulo):
 
     if not mapa_partes: return False
 
-    carpeta = os.path.join(config.DOWNLOAD_DIR, f"{titulo} [{fmt}]")
+    titulo_limpio = sanitizar_nombre(titulo)
+    carpeta = os.path.join(config.DOWNLOAD_DIR, f"{titulo_limpio} [{fmt}]")
     if not os.path.exists(carpeta): os.makedirs(carpeta)
     
     total_partes = len(mapa_partes)
     partes_exitosas = 0
     
-    print(f"   [LANZAMIENTO] Descarga paralela ({total_partes} partes) para: {titulo}")
+    print(f"   [LANZAMIENTO] Descarga paralela ({total_partes} partes) para: {titulo_limpio}")
     state.init_movie(titulo, total_partes)
 
     with ThreadPoolExecutor(max_workers=len(mapa_partes) + 2) as executor:
@@ -120,7 +122,8 @@ def intentar_descarga(variante, titulo):
             if future.result(): partes_exitosas += 1
 
     if partes_exitosas == total_partes:
-        print(f"   [POST] Descarga completa. Iniciando extracción...")
+        print(f"   [POST] Descarga de [{fmt}] completa. Iniciando extracción INMEDIATA...")
+        state.update_extraction(titulo, 0)
         res = post.procesar_carpeta_final(carpeta, titulo, fmt, titulo_orig)
         state.purge_movie(titulo)
         return res
@@ -149,13 +152,15 @@ def worker_descarga_pelicula(pid, datos_peli):
         if fmt in mapa:
             if intentar_descarga(mapa[fmt], titulo):
                 db.marcar_cascada_descargado(pid, fmt)
-                state.mark_completed(titulo)
+                # IMPORTANTE: Pasamos fmt para que el historial lo marque bien
+                state.mark_completed(titulo, fmt)
                 return 
     
     if "2160p" in mapa:
         if intentar_descarga(mapa["2160p"], titulo):
             db.marcar_cascada_descargado(pid, "2160p")
-            state.mark_completed(titulo)
+            # IMPORTANTE: Pasamos fmt para que el historial lo marque bien
+            state.mark_completed(titulo, "2160p")
 
     print(f"[Worker {pid}] 🏁 Finalizado flujo para: {titulo}")
 
@@ -163,41 +168,31 @@ def worker_descarga_pelicula(pid, datos_peli):
 
 def flujo_descargas(context):
     
-    # 1. EJECUTAR SCRAPING (Buscar novedades en foros)
     print("\n[*] --- BUSCANDO NOVEDADES EN FOROS ---")
     try:
-        # Llamamos al scraper real
         scraper.ejecutar(context) 
         print("[*] Scraping finalizado.")
     except Exception as e:
         print(f"[!] Error durante el scraping: {e}")
 
-    # 2. ACTUALIZAR PANEL CON ÚLTIMAS NOVEDADES (Detectadas)
-    # Obtenemos las últimas 12 inserciones de la tabla descargas
     ultimas_novedades = db.obtener_ultimas_novedades(12)
     detected_list = []
-    
     if ultimas_novedades:
         for r in ultimas_novedades:
-            # Tupla: (titulo_base, formato, titulo_original)
             titulo_base = r[0]
             fmt_raw = r[1]
-            
-            # Limpieza visual del título y extracción de año
-            # Asumimos que titulo_base suele venir limpio o con el año tipo "Titulo (2024)"
             match_anio = re.search(r'\((\d{4})\)', titulo_base)
             anio = match_anio.group(1) if match_anio else "???? "
             titulo_clean = titulo_base.replace(f"({anio})", "").strip()
+            titulo_clean = sanitizar_nombre(titulo_clean)
             
             detected_list.append({
                 "titulo": titulo_clean,
                 "anio": anio,
                 "formato": fmt_raw
             })
-    
     state.set_detected_movies(detected_list)
 
-    # 3. PROCESAR DESCARGAS PENDIENTES
     print("[*] --- PROCESANDO COLA DE DESCARGAS ---")
     conn = db.get_connection()
     cur = conn.cursor()
@@ -209,10 +204,8 @@ def flujo_descargas(context):
         print("[*] No hay descargas pendientes.")
         return
 
-    # Agrupar variantes
     data_map = {}
     for r in pendientes_raw:
-        # Tupla: (d.id, pid, titulo_base, formato, enlaces, titulo_original)
         did = r[0]
         pid = r[1]
         tit = r[2]
@@ -246,14 +239,12 @@ def flujo_descargas(context):
         time.sleep(2)
 
 def main():
-    db.init_db() # (Dummy en tu caso)
+    db.init_db()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = obtener_contexto_navegador(browser)
-        
         print("[*] Bot iniciado. Iniciando ciclo completo...")
         flujo_descargas(context)
-        
         guardar_sesion(context)
         browser.close()
 

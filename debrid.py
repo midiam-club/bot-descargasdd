@@ -106,7 +106,6 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia, host_original=Non
             r.raise_for_status()
             total_size = int(r.headers.get('content-length', 0))
             
-            # 8MB de buffer para optimizar red
             chunk_size = 8 * 1024 * 1024 
             
             with open(ruta_temp, 'wb') as f:
@@ -152,7 +151,10 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia, host_original=Non
         os.rename(ruta_temp, ruta_final)
         
         state.release_download_slot()
-        state.finish_download(titulo_referencia, nombre_archivo, avg_speed, duration_str)
+        
+        # IMPORTANTE: Pasamos formato_peli para que monitor separe el historial
+        state.finish_download(titulo_referencia, nombre_archivo, avg_speed, duration_str, formato=formato_peli)
+        
         return ruta_final
 
     except Exception as e:

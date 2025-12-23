@@ -1,63 +1,34 @@
 import re
-from datetime import datetime
-import config
-import unicodedata
+import os
 
-def extraer_hilo_id(url):
-    match = re.search(r't=(\d+)', url)
-    return match.group(1) if match else url
-
-def quitar_tildes(texto):
-    return ''.join((c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn'))
-
-# --- NUEVA FUNCIÓN DE SANITIZACIÓN WINDOWS ---
-def sanitizar_nombre(texto):
+def sanitizar_nombre(nombre):
     """
-    Elimina caracteres prohibidos en Windows y sistemas de archivos NTFS/FAT32.
-    Prohibidos: < > : " / \ | ? *
+    Elimina caracteres no válidos para sistemas de archivos (Windows/Linux).
+    Reemplaza : < > " / \ | ? * por nada o guiones.
     """
-    if not texto: return "sin_titulo"
-    # Reemplazamos los prohibidos por nada o por un guion si es necesario
-    limpio = re.sub(r'[<>:"/\\|?*]', '', texto)
-    # Eliminamos espacios dobles y espacios al final/inicio
-    limpio = re.sub(r'\s+', ' ', limpio).strip()
-    return limpio
+    if not nombre: return "sin_titulo"
+    
+    # 1. Reemplazar dos puntos por espacio-guión para mantener legibilidad (ej: "Misión: Imposible" -> "Misión - Imposible")
+    nombre = nombre.replace(":", " -")
+    
+    # 2. Eliminar caracteres estrictamente prohibidos
+    # < > : " / \ | ? *
+    nombre = re.sub(r'[<>:"/\\|?*]', '', nombre)
+    
+    # 3. Eliminar espacios dobles y espacios al final/inicio
+    nombre = re.sub(r'\s+', ' ', nombre).strip()
+    
+    # 4. Evitar nombres reservados en Windows (NUL, COM1, etc) - Opcional pero recomendado
+    nombre = re.sub(r'^(CON|PRN|AUX|NUL|COM\d|LPT\d)$', r'\1_', nombre, flags=re.IGNORECASE)
 
-def limpiar_titulo(titulo_sucio):
-    try:
-        match_anio = re.search(r'[\(\[\s\|](\d{4})[\)\]\s\|]', titulo_sucio)
-        if not match_anio:
-            limpio = re.sub(r'\[.*?\]', '', titulo_sucio).strip()
-            return quitar_tildes(limpio)
-        titulo_parte = titulo_sucio[:match_anio.start()]
-        titulo_parte = re.sub(r'\(.*?\)', '', titulo_parte)
-        titulo_parte = titulo_parte.replace('[', '').replace(']', '').replace('|', '').replace('-', '')
-        titulo_parte = quitar_tildes(titulo_parte)
-        titulo_parte = re.sub(r'\s+', ' ', titulo_parte).strip()
-        return f"{titulo_parte} ({match_anio.group(1)})"
-    except: return titulo_sucio.strip()
+    # 5. Evitar que empiece o termine con punto
+    nombre = nombre.strip('.')
 
-def detectar_formato(titulo, foro_id):
-    if str(foro_id) == "164": return "2160p"
-    if str(foro_id) == "250": return "x265"
-    if str(foro_id) == "142": return "1080p"
-    if str(foro_id) == "143": return "m1080p"
-    t = titulo.upper()
-    if "2160P" in t or "4K" in t: return "2160p"
-    if "X265" in t: return "x265"
-    if "MICRO" in t or "M1080P" in t: return "m1080p"
-    if "1080P" in t: return "1080p"
-    return "Desconocido"
+    return nombre
 
-def debe_aplicar_limite():
-    if not config.ENABLE_SPEED_LIMIT:
-        return False
-    now = datetime.now().time()
-    start = config.LIMIT_START_TIME
-    end = config.LIMIT_END_TIME
-    if not start or not end:
-        return False
-    if start < end:
-        return start <= now < end
-    else:
-        return now >= start or now < end
+def formatear_tamano(size_in_mb):
+    """Convierte MB a GB/MB string"""
+    if not size_in_mb: return "0 MB"
+    if size_in_mb >= 1024:
+        return f"{size_in_mb/1024:.2f} GB"
+    return f"{size_in_mb:.1f} MB"
