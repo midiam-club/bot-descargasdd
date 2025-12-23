@@ -27,11 +27,12 @@ def buscar_descarga(cur, hilo_id):
 
 def insertar_descarga_hueco(conn, cur, peli_id, foro_id, hilo_id, formato, titulo_raw):
     try:
+        # CORRECCIÓN: Pasamos False (booleano) en lugar de 0 (entero)
         cur.execute("""
             INSERT INTO descargas (pelicula_id, foro_id, hilo_id, formato, titulo_original, descargado)
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (hilo_id) DO NOTHING;
-        """, (peli_id, int(foro_id), hilo_id, formato, titulo_raw, 0)) 
+        """, (peli_id, int(foro_id), hilo_id, formato, titulo_raw, False)) 
         conn.commit()
     except: conn.rollback()
 
@@ -45,6 +46,7 @@ def marcar_como_descargado(did):
     try:
         conn = get_connection()
         cur = conn.cursor()
+        # CORRECCIÓN: Usamos TRUE explícito
         cur.execute("UPDATE descargas SET descargado = TRUE WHERE id = %s", (did,))
         conn.commit()
         cur.close()
@@ -55,31 +57,35 @@ def marcar_como_descargado(did):
         return False
 
 def obtener_pendientes(cur):
+    """
+    Obtiene las descargas pendientes.
+    CORRECCIÓN: WHERE d.descargado = FALSE (PostgreSQL estricto)
+    """
     query = """
         SELECT d.id, m.id as pid, m.titulo_base, d.formato, d.enlaces, d.titulo_original
         FROM descargas d
         JOIN peliculas_meta m ON d.pelicula_id = m.id
-        WHERE d.descargado = 0 
+        WHERE d.descargado = FALSE 
           AND d.enlaces IS NOT NULL 
           AND length(d.enlaces) > 10
     """
     cur.execute(query)
     resultados = cur.fetchall()
     
+    # DEBUG: Diagnóstico si no devuelve nada
     if not resultados:
-        cur.execute("SELECT count(*) FROM descargas WHERE descargado = 0")
+        # Check con FALSE
+        cur.execute("SELECT count(*) FROM descargas WHERE descargado = FALSE")
         pendientes_totales = cur.fetchone()[0]
-        # Mensaje de debug solo si hay pendientes pero no salen en la query principal (por falta de links)
         if pendientes_totales > 0:
-            print(f"   [DB DEBUG] Info: Hay {pendientes_totales} descargas pendientes en total (algunas pueden no tener enlaces aún).")
+            print(f"   [DB DEBUG] Hay {pendientes_totales} descargas en estado FALSE, pero fallan en el JOIN o no tienen enlaces.")
             
     return resultados
 
-# --- NUEVA FUNCIÓN: DETECTAR ROTAS ---
 def obtener_descargas_sin_enlaces():
     """
-    Busca descargas que están marcadas como pendientes (0) pero no tienen enlaces válidos.
-    Retorna lista de (hilo_id, titulo_original)
+    Busca descargas rotas para reparar.
+    CORRECCIÓN: WHERE descargado = FALSE
     """
     conn = get_connection()
     cur = conn.cursor()
@@ -87,7 +93,7 @@ def obtener_descargas_sin_enlaces():
         query = """
             SELECT hilo_id, titulo_original 
             FROM descargas 
-            WHERE descargado = 0 
+            WHERE descargado = FALSE 
               AND (enlaces IS NULL OR length(enlaces) < 10)
         """
         cur.execute(query)
@@ -111,6 +117,7 @@ def marcar_cascada_descargado(pid, formato_descargado):
         elif formato_descargado == "1080p":
             target_formats.extend(["m1080p"])
             
+        # CORRECCIÓN: Usamos TRUE explícito
         cur.execute("""
             UPDATE descargas 
             SET descargado = TRUE 
