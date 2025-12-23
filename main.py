@@ -6,6 +6,7 @@ import config
 import database as db
 import debrid
 import post_procesado as post
+import scraper # <--- IMPORTANTE: Debe existir scraper.py
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from playwright.sync_api import sync_playwright
 from web_server import run_web_server
@@ -49,6 +50,7 @@ def extraer_numero_parte(filename):
 
 def _descargar_parte_wrapper(candidatos, carpeta, titulo, fmt):
     for cand in candidatos:
+        print(f"      [INTENTO] Parte {cand['part_num']} usando {cand['host']} (Prio: {cand['prio']})")
         ruta = debrid.descargar_archivo(
             cand["url"], 
             carpeta, 
@@ -80,6 +82,7 @@ def intentar_descarga(variante, titulo):
         except: host_clean = "desconocido"
 
         num_parte = extraer_numero_parte(nombre_fichero)
+        
         prioridad = 999
         for idx, dom in enumerate(config.PRIORIDAD_DOMINIOS):
             if dom.lower() in link.lower():
@@ -88,8 +91,12 @@ def intentar_descarga(variante, titulo):
         
         if num_parte not in mapa_partes: mapa_partes[num_parte] = []
         mapa_partes[num_parte].append({
-            "url": url_prem, "name": nombre_fichero, "prio": prioridad,
-            "host": host_clean, "debrid": debrid_used
+            "url": url_prem, 
+            "name": nombre_fichero, 
+            "prio": prioridad,
+            "host": host_clean, 
+            "debrid": debrid_used,
+            "part_num": num_parte
         })
 
     if not mapa_partes: return False
@@ -101,14 +108,13 @@ def intentar_descarga(variante, titulo):
     partes_exitosas = 0
     
     print(f"   [LANZAMIENTO] Descarga paralela ({total_partes} partes) para: {titulo}")
-
     state.init_movie(titulo, total_partes)
 
     with ThreadPoolExecutor(max_workers=len(mapa_partes) + 2) as executor:
         futures = []
         for num_parte in mapa_partes:
-            candidatos = sorted(mapa_partes[num_parte], key=lambda x: x["prio"])
-            futures.append(executor.submit(_descargar_parte_wrapper, candidatos, carpeta, titulo, fmt))
+            candidatos_ordenados = sorted(mapa_partes[num_parte], key=lambda x: x["prio"])
+            futures.append(executor.submit(_descargar_parte_wrapper, candidatos_ordenados, carpeta, titulo, fmt))
         
         for future in as_completed(futures):
             if future.result(): partes_exitosas += 1
@@ -155,28 +161,33 @@ def worker_descarga_pelicula(pid, datos_peli):
 
 # --- MAIN LOOP ---
 
-def flujo_descargas():
-    print("\n[*] --- BUSCANDO TAREAS PENDIENTES ---")
-    conn = db.get_connection()
-    cur = conn.cursor()
-    pendientes_raw = db.obtener_pendientes(cur)
-    cur.close()
-    conn.close()
+def flujo_descargas(context):
     
-    # --- NUEVA LÓGICA: PROCESAR PARA MONITOR ---
+    # 1. EJECUTAR SCRAPING (Buscar novedades en foros)
+    print("\n[*] --- BUSCANDO NOVEDADES EN FOROS ---")
+    try:
+        # Llamamos al scraper real
+        scraper.ejecutar(context) 
+        print("[*] Scraping finalizado.")
+    except Exception as e:
+        print(f"[!] Error durante el scraping: {e}")
+
+    # 2. ACTUALIZAR PANEL CON ÚLTIMAS NOVEDADES (Detectadas)
+    # Obtenemos las últimas 12 inserciones de la tabla descargas
+    ultimas_novedades = db.obtener_ultimas_novedades(12)
     detected_list = []
-    if pendientes_raw:
-        for r in pendientes_raw:
-            # r = (did, pid, tit, fmt, lnk, torig)
-            titulo_raw = r[2]
-            fmt_raw = r[3]
+    
+    if ultimas_novedades:
+        for r in ultimas_novedades:
+            # Tupla: (titulo_base, formato, titulo_original)
+            titulo_base = r[0]
+            fmt_raw = r[1]
             
-            # Extraer Año con Regex
-            match_anio = re.search(r'\((\d{4})\)', titulo_raw)
+            # Limpieza visual del título y extracción de año
+            # Asumimos que titulo_base suele venir limpio o con el año tipo "Titulo (2024)"
+            match_anio = re.search(r'\((\d{4})\)', titulo_base)
             anio = match_anio.group(1) if match_anio else "???? "
-            
-            # Limpiar título para mostrar
-            titulo_clean = titulo_raw.replace(f"({anio})", "").strip()
+            titulo_clean = titulo_base.replace(f"({anio})", "").strip()
             
             detected_list.append({
                 "titulo": titulo_clean,
@@ -184,17 +195,31 @@ def flujo_descargas():
                 "formato": fmt_raw
             })
     
-    # Actualizamos el monitor con lo que hemos encontrado
     state.set_detected_movies(detected_list)
-    # -------------------------------------------
+
+    # 3. PROCESAR DESCARGAS PENDIENTES
+    print("[*] --- PROCESANDO COLA DE DESCARGAS ---")
+    conn = db.get_connection()
+    cur = conn.cursor()
+    pendientes_raw = db.obtener_pendientes(cur)
+    cur.close()
+    conn.close()
 
     if not pendientes_raw:
         print("[*] No hay descargas pendientes.")
         return
 
+    # Agrupar variantes
     data_map = {}
     for r in pendientes_raw:
-        did, pid, tit, fmt, lnk, torig = r
+        # Tupla: (d.id, pid, titulo_base, formato, enlaces, titulo_original)
+        did = r[0]
+        pid = r[1]
+        tit = r[2]
+        fmt = r[3]
+        lnk = r[4]
+        torig = r[5]
+
         if pid not in data_map: 
             data_map[pid] = {"titulo": tit, "variantes": []}
         data_map[pid]["variantes"].append({
@@ -204,7 +229,7 @@ def flujo_descargas():
     cola_de_trabajo = list(data_map.items())
     hilos_activos = []
 
-    print(f"[*] Se encontraron {len(cola_de_trabajo)} películas.")
+    print(f"[*] Se encontraron {len(cola_de_trabajo)} películas pendientes.")
 
     while cola_de_trabajo or hilos_activos:
         hilos_activos = [t for t in hilos_activos if t.is_alive()]
@@ -221,13 +246,13 @@ def flujo_descargas():
         time.sleep(2)
 
 def main():
-    db.init_db()
+    db.init_db() # (Dummy en tu caso)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = obtener_contexto_navegador(browser)
         
-        print("[*] Bot iniciado. Comprobando cola...")
-        flujo_descargas()
+        print("[*] Bot iniciado. Iniciando ciclo completo...")
+        flujo_descargas(context)
         
         guardar_sesion(context)
         browser.close()

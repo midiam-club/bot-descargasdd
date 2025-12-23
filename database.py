@@ -59,6 +59,10 @@ def marcar_como_descargado(did):
         return False
 
 def obtener_pendientes(cur):
+    """
+    Obtiene las descargas pendientes.
+    Retorna: (did, pid, titulo_base, formato, enlaces, titulo_original)
+    """
     cur.execute("""
         SELECT d.id, m.id as pid, m.titulo_base, d.formato, d.enlaces, d.titulo_original
         FROM descargas d
@@ -92,3 +96,28 @@ def marcar_cascada_descargado(pid, formato_descargado):
     except Exception as e:
         print(f"[DB Error] Cascada fallida: {e}")
         return False
+
+# --- NUEVA FUNCIÓN PARA EL DASHBOARD ---
+def obtener_ultimas_novedades(limit=12):
+    """
+    Obtiene las últimas N entradas en la tabla descargas (ordenadas por ID descendente).
+    Devuelve: (titulo_base, formato, titulo_original)
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        query = """
+            SELECT m.titulo_base, d.formato, d.titulo_original
+            FROM descargas d
+            JOIN peliculas_meta m ON d.pelicula_id = m.id
+            ORDER BY d.id DESC
+            LIMIT %s
+        """
+        cur.execute(query, (limit,))
+        return cur.fetchall()
+    except Exception as e:
+        print(f"[DB Error] Al obtener novedades: {e}")
+        return []
+    finally:
+        cur.close()
+        conn.close()
