@@ -5,32 +5,63 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# 2. Instalamos dependencias del sistema y herramientas (7zip, MediaInfo)
-# - curl/gnupg: necesarios para descargar dependencias
-# - p7zip-full: para descomprimir
-# - mediainfo: para renombrado
+# Directorio de trabajo
+WORKDIR /app
+
+# 2. Instalamos dependencias del sistema y herramientas de compilación
+#    - wget, make, g++: NECESARIOS para compilar unrar
+#    - p7zip-full, mediainfo: Herramientas del bot
+#    - Librerías extra: Dependencias comunes para que Chromium/Playwright no fallen en la versión slim
 RUN apt-get update && apt-get install -y \
     curl \
     gnupg \
-    p7zip-full \
+    wget \
+    make \
+    g++ \
     mediainfo \
+    libglib2.0-0 \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libxcb1 \
+    libxkbcommon0 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Directorio de trabajo
-WORKDIR /app
+# 3. --- INSTALACIÓN UNRAR (RARLAB) ---
+# Descargamos, compilamos e instalamos la versión oficial que soporta contraseñas y RAR5.
+# Esto genera el binario 'unrar' en /usr/bin/unrar que usará tu script.
+RUN wget https://www.rarlab.com/rar/unrarsrc-6.2.12.tar.gz && \
+    tar -xvf unrarsrc-6.2.12.tar.gz && \
+    cd unrar && \
+    make -f makefile && \
+    install -v -m755 unrar /usr/bin/unrar && \
+    cd .. && \
+    rm -rf unrar unrarsrc-6.2.12.tar.gz
 
-# 4. Copiar y instalar librerías de Python
+# 4. Copiar e instalar librerías de Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 5. INSTALACIÓN OPTIMIZADA DE PLAYWRIGHT
-# En lugar de usar la imagen gigante de Microsoft, instalamos
-# Playwright y LUEGO solo el navegador Chromium y sus dependencias del sistema.
 RUN pip install playwright && \
     playwright install chromium && \
     playwright install-deps chromium
 
-# 6. Copiar el código fuente del bot (todos los ficheros .py)
+# 6. Copiar el código fuente del bot
 COPY . .
 
 # 7. Comando de ejecución

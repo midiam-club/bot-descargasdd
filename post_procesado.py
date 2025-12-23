@@ -72,21 +72,19 @@ def encontrar_archivo_cabecera(carpeta):
         if lf.endswith(".001"): return f
     return None
 
-# --- NUEVA FUNCIÓN DE LIMPIEZA MANUAL ---
 def limpiar_basura(carpeta_destino, archivo_video_final):
     """
     Borra archivos comprimidos y partes sobrantes tras la extracción.
     """
     print("      [LIMPIEZA] Iniciando borrado de archivos comprimidos...")
     
-    # Extensiones a eliminar
     ext_borrar = [".rar", ".zip", ".7z", ".iso"]
     
     archivos = os.listdir(carpeta_destino)
     count = 0
     
     for f in archivos:
-        # PROTECCIÓN: Nunca borrar el video que acabamos de extraer
+        # PROTECCIÓN: Nunca borrar el video extraído
         if f == archivo_video_final: continue
         
         lf = f.lower()
@@ -94,9 +92,7 @@ def limpiar_basura(carpeta_destino, archivo_video_final):
         
         borrar = False
         
-        # 1. Por extensión directa
         if any(lf.endswith(ext) for ext in ext_borrar): borrar = True
-        # 2. Por patrones de partes (.part01.rar, .r00, .z01, .001)
         elif ".part" in lf and ".rar" in lf: borrar = True
         elif re.search(r'\.[rz]\d+$', lf): borrar = True
         elif re.search(r'\.\d{3}$', lf): borrar = True
@@ -163,7 +159,7 @@ def renombrar_archivo_final(ruta_archivo, titulo_peli, formato_foro, titulo_orig
         fijar_permisos(ruta_archivo)
         return ruta_archivo
 
-# --- PROCESO PRINCIPAL ---
+# --- PROCESO PRINCIPAL CON UNRAR ---
 
 def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_original):
     print(f"   [POST] Iniciando procesado en: {carpeta_destino}")
@@ -180,10 +176,16 @@ def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_ori
         
         if archivo_cabecera:
             ruta_rar = os.path.join(carpeta_destino, archivo_cabecera)
-            print(f"      [EXTRAER] Archivo maestro: {archivo_cabecera}")
+            print(f"      [EXTRAER] Archivo maestro: {archivo_cabecera} (Usando unrar)")
             
-            # QUITAMOS -sdel, MANTENEMOS e
-            cmd = ["7z", "e", "-bsp1", ruta_rar, f"-o{carpeta_destino}", "-y", f"-p{RAR_PASSWORD}"]
+            # --- CAMBIO A UNRAR ---
+            # 'e': Extraer en directorio actual (aplanar estructura)
+            # '-y': Asumir sí a todo (sobrescribir)
+            # '-p': Contraseña
+            # ruta_rar: Archivo origen
+            # carpeta_destino: Destino (unrar requiere que acabe en / o path)
+            
+            cmd = ["unrar", "e", "-y", f"-p{RAR_PASSWORD}", ruta_rar, carpeta_destino]
             
             try:
                 process = subprocess.Popen(
@@ -203,6 +205,7 @@ def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_ori
                     
                     if char:
                         buffer_pct += char
+                        # Intentamos parsear porcentaje si unrar lo muestra (depende versión)
                         if char == '%' or char == '\r' or char == '\n':
                             match = re.search(r'(\d+)%', buffer_pct)
                             if match:
@@ -216,13 +219,15 @@ def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_ori
 
                 if rc == 0:
                     print("      [OK] Descompresión exitosa.")
-                    time.sleep(1) # Esperamos a que el sistema de archivos libere los handles
+                    time.sleep(1) 
                 else:
-                    print(f"      [ERROR 7-ZIP] Código: {rc}")
+                    print(f"      [ERROR UNRAR] Código: {rc}")
+                    # Leemos stderr si quedó algo
+                    # (aunque con stderr=STDOUT ya lo habríamos visto arriba)
                     return False
 
             except Exception as e:
-                print(f"      [!] Excepción: {e}")
+                print(f"      [!] Excepción ejecutando unrar: {e}")
                 state.clean_extraction(titulo_peli)
                 return False
 
@@ -232,10 +237,10 @@ def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_ori
                      archivo_video = f
                      break
         else:
-            print("      [INFO] No se detectaron archivos comprimidos.")
+            print("      [INFO] No se detectaron archivos comprimidos válidos.")
 
     if archivo_video:
-        # AQUÍ ESTÁ LA MAGIA: BORRAMOS MANUALMENTE
+        # Borrado manual tras éxito
         limpiar_basura(carpeta_destino, archivo_video)
         
         ruta_video = os.path.join(carpeta_destino, archivo_video)

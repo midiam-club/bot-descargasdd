@@ -12,27 +12,26 @@ from web_server import run_web_server
 from monitor import state
 from urllib.parse import urlparse
 
-# --- GESTIÓN DE SESIÓN Y NAVEGADOR ---
+# --- SESIÓN ---
 
 def obtener_contexto_navegador(browser):
-    """
-    Intenta cargar la sesión. Si falla o no existe, crea un contexto nuevo
-    con el User-Agent legítimo definido en config.py.
-    """
     if os.path.exists(config.SESSION_FILE):
         print(f"   [SESIÓN] Cargando cookies desde: {config.SESSION_FILE}")
         try:
             return browser.new_context(storage_state=config.SESSION_FILE)
         except Exception as e:
-            print(f"   [!] Error cargando sesión (fichero corrupto): {e}")
+            print(f"   [!] Error cargando sesión: {e}")
             return browser.new_context(user_agent=config.DEFAULT_USER_AGENT)
     else:
-        print("   [SESIÓN] No existe fichero previo. Se creará uno nuevo.")
+        print("   [SESIÓN] Nueva sesión (User-Agent legítimo).")
         return browser.new_context(user_agent=config.DEFAULT_USER_AGENT)
 
 def guardar_sesion(context):
-    try: context.storage_state(path=config.SESSION_FILE)
-    except: pass
+    try: 
+        context.storage_state(path=config.SESSION_FILE)
+        print(f"   [SESIÓN] Cookies guardadas en: {config.SESSION_FILE}")
+    except Exception as e: 
+        print(f"   [!] Error guardando sesión: {e}")
 
 # --- UTILIDADES ---
 
@@ -46,24 +45,19 @@ def extraer_numero_parte(filename):
         return int(match_ext.group(1))
     return 1
 
-# --- LÓGICA DE DESCARGA PARALELIZADA ---
+# --- DESCARGA ---
 
-def _descargar_parte_wrapper(candidatos, carpeta, titulo):
-    """
-    Helper para probar candidatos de una parte específica.
-    Se ejecuta en un hilo independiente.
-    """
+def _descargar_parte_wrapper(candidatos, carpeta, titulo, fmt):
     for cand in candidatos:
-        # debrid.descargar_archivo gestionará el bloqueo (semáforo) si no hay slots
         ruta = debrid.descargar_archivo(
             cand["url"], 
             carpeta, 
             titulo, 
             host_original=cand["host"], 
-            debrid_source=cand["debrid"]
+            debrid_source=cand["debrid"],
+            formato_peli=fmt
         )
-        if ruta:
-            return True
+        if ruta: return True
     return False
 
 def intentar_descarga(variante, titulo):
@@ -73,21 +67,17 @@ def intentar_descarga(variante, titulo):
     
     if not raw_links: return False
     
-    print(f"   [ANÁLISIS] Resolviendo metadatos de {len(raw_links)} enlaces para {fmt}...")
+    print(f"   [ANÁLISIS] Resolviendo {len(raw_links)} enlaces para {fmt}...")
     
-    # 1. Resolver enlaces premium y agrupar por número de parte
     mapa_partes = {}
     for link in raw_links:
         url_prem, nombre_fichero, debrid_used = debrid.obtener_enlace_premium(link)
-        
         if not url_prem or not nombre_fichero: continue
         
-        # Extraer host limpio para mostrar en el frontend
         try:
             parsed = urlparse(link)
             host_clean = parsed.netloc.replace("www.", "")
-        except: 
-            host_clean = "desconocido"
+        except: host_clean = "desconocido"
 
         num_parte = extraer_numero_parte(nombre_fichero)
         prioridad = 999
@@ -98,59 +88,47 @@ def intentar_descarga(variante, titulo):
         
         if num_parte not in mapa_partes: mapa_partes[num_parte] = []
         mapa_partes[num_parte].append({
-            "url": url_prem, 
-            "name": nombre_fichero, 
-            "prio": prioridad,
-            "host": host_clean, 
-            "debrid": debrid_used
+            "url": url_prem, "name": nombre_fichero, "prio": prioridad,
+            "host": host_clean, "debrid": debrid_used
         })
 
     if not mapa_partes: return False
 
-    # 2. Preparar carpeta
     carpeta = os.path.join(config.DOWNLOAD_DIR, f"{titulo} [{fmt}]")
     if not os.path.exists(carpeta): os.makedirs(carpeta)
     
     total_partes = len(mapa_partes)
     partes_exitosas = 0
     
-    print(f"   [LANZAMIENTO] Iniciando descarga paralela de {total_partes} partes para: {titulo}")
+    print(f"   [LANZAMIENTO] Descarga paralela ({total_partes} partes) para: {titulo}")
 
-    # 3. Descarga Paralela
-    # Lanzamos un hilo por cada parte. El semáforo en debrid.py evitará saturar la red.
+    state.init_movie(titulo, total_partes)
+
     with ThreadPoolExecutor(max_workers=len(mapa_partes) + 2) as executor:
         futures = []
         for num_parte in mapa_partes:
             candidatos = sorted(mapa_partes[num_parte], key=lambda x: x["prio"])
-            futures.append(executor.submit(_descargar_parte_wrapper, candidatos, carpeta, titulo))
+            futures.append(executor.submit(_descargar_parte_wrapper, candidatos, carpeta, titulo, fmt))
         
         for future in as_completed(futures):
-            if future.result():
-                partes_exitosas += 1
+            if future.result(): partes_exitosas += 1
 
-    # 4. Post-procesado y Limpieza
-    exito_total = False
     if partes_exitosas == total_partes:
-        print(f"   [POST] Todas las partes descargadas. Iniciando extracción...")
-        exito_total = post.procesar_carpeta_final(carpeta, titulo, fmt, titulo_orig)
+        print(f"   [POST] Descarga completa. Iniciando extracción...")
+        res = post.procesar_carpeta_final(carpeta, titulo, fmt, titulo_orig)
+        state.purge_movie(titulo)
+        return res
     else:
-        print(f"   [ERROR] Solo se descargaron {partes_exitosas}/{total_partes} partes.")
+        print(f"   [ERROR] Incompleto: {partes_exitosas}/{total_partes} partes.")
+        state.purge_movie(titulo)
+        return False
 
-    # IMPORTANTE: Limpiamos la película del monitor (zona "En Curso") 
-    # tanto si acabó bien como si falló, para que no se quede "colgada".
-    state.purge_movie(titulo)
-    
-    return exito_total
-
-# --- GESTIÓN DE WORKERS (PELÍCULAS) ---
+# --- WORKERS ---
 
 def worker_wrapper(pid, datos_peli):
-    """Envoltorio para capturar errores sin tumbar el hilo"""
-    try:
-        worker_descarga_pelicula(pid, datos_peli)
+    try: worker_descarga_pelicula(pid, datos_peli)
     except Exception as e:
-        print(f"[Worker Error] Fallo en película ID {pid}: {e}")
-        # Aseguramos limpieza en caso de crash del hilo
+        print(f"[Worker Error] ID {pid}: {e}")
         state.purge_movie(datos_peli["titulo"])
 
 def worker_descarga_pelicula(pid, datos_peli):
@@ -161,24 +139,21 @@ def worker_descarga_pelicula(pid, datos_peli):
     print(f"[Worker {pid}] 🚀 Iniciando flujo para: {titulo}")
     
     orden_hd = ["x265", "1080p", "m1080p"]
-    
-    # Lógica HD
     for fmt in orden_hd:
         if fmt in mapa:
             if intentar_descarga(mapa[fmt], titulo):
                 db.marcar_cascada_descargado(pid, fmt)
-                state.mark_completed(titulo) # Flag Verde en Historial
-                return # Terminamos con esta peli
+                state.mark_completed(titulo)
+                return 
     
-    # Lógica 4K (independiente)
     if "2160p" in mapa:
         if intentar_descarga(mapa["2160p"], titulo):
             db.marcar_cascada_descargado(pid, "2160p")
-            state.mark_completed(titulo) # Flag Verde en Historial
+            state.mark_completed(titulo)
 
     print(f"[Worker {pid}] 🏁 Finalizado flujo para: {titulo}")
 
-# --- BUCLE PRINCIPAL ---
+# --- MAIN LOOP ---
 
 def flujo_descargas():
     print("\n[*] --- BUSCANDO TAREAS PENDIENTES ---")
@@ -188,11 +163,35 @@ def flujo_descargas():
     cur.close()
     conn.close()
     
+    # --- NUEVA LÓGICA: PROCESAR PARA MONITOR ---
+    detected_list = []
+    if pendientes_raw:
+        for r in pendientes_raw:
+            # r = (did, pid, tit, fmt, lnk, torig)
+            titulo_raw = r[2]
+            fmt_raw = r[3]
+            
+            # Extraer Año con Regex
+            match_anio = re.search(r'\((\d{4})\)', titulo_raw)
+            anio = match_anio.group(1) if match_anio else "???? "
+            
+            # Limpiar título para mostrar
+            titulo_clean = titulo_raw.replace(f"({anio})", "").strip()
+            
+            detected_list.append({
+                "titulo": titulo_clean,
+                "anio": anio,
+                "formato": fmt_raw
+            })
+    
+    # Actualizamos el monitor con lo que hemos encontrado
+    state.set_detected_movies(detected_list)
+    # -------------------------------------------
+
     if not pendientes_raw:
         print("[*] No hay descargas pendientes.")
         return
 
-    # Agrupar variantes por película
     data_map = {}
     for r in pendientes_raw:
         did, pid, tit, fmt, lnk, torig = r
@@ -205,20 +204,15 @@ def flujo_descargas():
     cola_de_trabajo = list(data_map.items())
     hilos_activos = []
 
-    print(f"[*] Se encontraron {len(cola_de_trabajo)} películas para procesar.")
+    print(f"[*] Se encontraron {len(cola_de_trabajo)} películas.")
 
-    # Bucle de gestión de hilos de película
     while cola_de_trabajo or hilos_activos:
         hilos_activos = [t for t in hilos_activos if t.is_alive()]
-        
-        # Permitimos hasta 5 películas preparándose/descomprimiendo a la vez.
-        # El límite real de ancho de banda lo controla debrid.py con el semáforo.
         limite_gestores_pelicula = 5 
         
         while len(hilos_activos) < limite_gestores_pelicula and cola_de_trabajo:
             pid, datos = cola_de_trabajo.pop(0)
-            print(f"[Gestor] Iniciando hilo para: {datos['titulo']} (Activos: {len(hilos_activos)+1}/{limite_gestores_pelicula})")
-            
+            print(f"[Gestor] Iniciando hilo: {datos['titulo']}")
             t = threading.Thread(target=worker_wrapper, args=(pid, datos))
             t.daemon = True
             t.start()
@@ -227,33 +221,26 @@ def flujo_descargas():
         time.sleep(2)
 
 def main():
-    # Inicialización dummy de DB (para evitar error en scripts viejos)
     db.init_db()
-    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = obtener_contexto_navegador(browser)
         
-        # Aquí iría tu lógica de scraping si la tuvieras integrada
-        # page = context.new_page()
-        # scraper.ejecutar(...)
-
-        print("[*] Bot iniciado. Comprobando cola de descargas...")
+        print("[*] Bot iniciado. Comprobando cola...")
         flujo_descargas()
         
+        guardar_sesion(context)
         browser.close()
 
 if __name__ == "__main__":
-    print("[SYSTEM] Arrancando servidor web en puerto 8000...")
+    print("[SYSTEM] Servidor web en puerto 8000...")
     t_web = threading.Thread(target=run_web_server, daemon=True)
     t_web.start()
     
     while True:
-        try:
-            main()
+        try: main()
         except Exception as e:
             print(f"[CRASH] Error principal: {e}")
             time.sleep(30)
-        
         print(f"[*] Durmiendo {config.CHECK_INTERVAL} segundos...")
         time.sleep(config.CHECK_INTERVAL)

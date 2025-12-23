@@ -9,53 +9,59 @@ class DownloadMonitor:
         # Diccionarios de estado
         self.active_downloads = {}
         self.history = {}
-        self.completed_titles = set() # Para el Flag verde en historial
+        self.completed_titles = set()
+        self.movie_formats = {}
         self.total_speed = 0.0
         
-        # Gestión de Slots (Semáforo de descargas simultáneas)
+        # Gestión de Novedades Detectadas
+        self.detected_movies = [] 
+        
+        # Gestión de Slots
         self.download_condition = Condition()
         self.current_downloading_files = 0
         
         # Configuración dinámica
         self.dynamic_config = {
-            "max_parallel": config.MAX_WORKERS, 
-            "limit_enabled": config.ENABLE_SPEED_LIMIT,
-            "limit_value": config.SPEED_LIMIT_MB
+            "max_parallel": int(config.MAX_WORKERS), 
+            "limit_enabled": getattr(config, 'ENABLE_SPEED_LIMIT', True),
+            "limit_value": float(config.SPEED_LIMIT_MB)
         }
+
+    # --- GESTIÓN DE DETECTADAS ---
+    def set_detected_movies(self, movies_list):
+        with self._lock:
+            self.detected_movies = movies_list
 
     # --- GESTIÓN DE ESTADO FINAL ---
     def mark_completed(self, titulo):
-        """Marca un título como totalmente finalizado (Flag Verde)"""
         with self._lock:
             self.completed_titles.add(titulo)
 
-    # --- SEMÁFORO (Control de concurrencia real) ---
+    # --- SEMÁFORO ---
     def acquire_download_slot(self):
-        """Bloquea el hilo hasta que haya un hueco libre según la config"""
         with self.download_condition:
             while self.current_downloading_files >= self.dynamic_config["max_parallel"]:
                 self.download_condition.wait()
             self.current_downloading_files += 1
 
     def release_download_slot(self):
-        """Libera un hueco y avisa a los hilos en espera"""
         with self.download_condition:
             if self.current_downloading_files > 0:
                 self.current_downloading_files -= 1
             self.download_condition.notify_all()
 
-    # --- ACTUALIZACIÓN DE DESCARGAS ---
-    def update_download(self, pelicula, archivo, leido_bytes, total_bytes, velocidad_mb, host=None, debrid=None):
+    # --- UPDATE ---
+    def update_download(self, pelicula, archivo, leido_bytes, total_bytes, velocidad_mb, host=None, debrid=None, formato=None):
         with self._lock:
             if pelicula not in self.active_downloads:
                 self.active_downloads[pelicula] = {}
             
+            if formato:
+                self.movie_formats[pelicula] = formato
+            
             porcentaje = (leido_bytes / total_bytes) * 100 if total_bytes > 0 else 0
             
-            # Recuperamos datos previos para no machacar info si llega parcial
             datos_previos = self.active_downloads[pelicula].get(archivo, {})
-            
-            # Si el archivo ya se marcó como completado, ignoramos actualizaciones tardías de red
             if datos_previos.get("status") == "completed":
                 return
 
@@ -66,7 +72,7 @@ class DownloadMonitor:
                 "progress": round(porcentaje, 1),
                 "speed": round(velocidad_mb, 2),
                 "downloaded": round(leido_bytes / (1024*1024), 2),
-                "total": round(total_bytes / (1024*1024), 2),
+                "total": round(total_bytes / (1024*1024), 2), # Esto ya está en MB
                 "status": "downloading",
                 "host": host_final,
                 "debrid": debrid_final
@@ -74,44 +80,45 @@ class DownloadMonitor:
             self._recalculate_total_speed()
 
     def finish_download(self, pelicula, archivo, avg_speed, duration_str):
-        """
-        Marca el archivo como completado PERO NO LO BORRA de active_downloads.
-        Esto permite que la barra de progreso total siga contabilizando el 100% de este archivo
-        mientras se descargan las otras partes.
-        """
         with self._lock:
+            # 1. Recuperar tamaño final antes de nada
+            final_size_mb = 0
             if pelicula in self.active_downloads and archivo in self.active_downloads[pelicula]:
-                # Actualizamos a estado final visual
+                final_size_mb = self.active_downloads[pelicula][archivo].get("total", 0)
+
+            # 2. Actualizar estado visual (sin borrar)
+            if pelicula in self.active_downloads and archivo in self.active_downloads[pelicula]:
                 file_data = self.active_downloads[pelicula][archivo]
                 file_data["status"] = "completed"
                 file_data["progress"] = 100.0
                 file_data["speed"] = 0.0
-                file_data["downloaded"] = file_data["total"] # Asegurar consistencia visual
+                file_data["downloaded"] = file_data["total"] 
             
-            # Añadimos al historial para persistencia
+            # 3. Guardar en Historial con el TAMAÑO incluido
             if pelicula not in self.history:
                 self.history[pelicula] = []
             
+            fmt = self.movie_formats.get(pelicula, "")
+
             self.history[pelicula].append({
                 "archivo": archivo,
                 "avg_speed": round(avg_speed, 2),
                 "duration": duration_str,
-                "timestamp": time.strftime("%H:%M:%S")
+                "timestamp": time.strftime("%H:%M:%S"),
+                "formato": fmt,
+                "size": final_size_mb  # <--- NUEVO CAMPO
             })
             self._recalculate_total_speed()
 
     def purge_movie(self, pelicula):
-        """
-        Borra la película entera de la lista de 'Activas'.
-        Se debe llamar SOLO cuando todo el proceso (descarga paralelela + extracción) ha terminado.
-        """
         with self._lock:
             if pelicula in self.active_downloads:
                 del self.active_downloads[pelicula]
+            if pelicula in self.movie_formats:
+                del self.movie_formats[pelicula]
             self._recalculate_total_speed()
 
     def remove_download(self, pelicula, archivo):
-        """Borrado forzoso de un archivo individual (usado en errores)"""
         with self._lock:
             if pelicula in self.active_downloads:
                 if archivo in self.active_downloads[pelicula]:
@@ -120,23 +127,17 @@ class DownloadMonitor:
                     del self.active_downloads[pelicula]
             self._recalculate_total_speed()
 
-    # --- GESTIÓN DE EXTRACCIÓN ---
     def update_extraction(self, pelicula, porcentaje):
         with self._lock:
-            if pelicula not in self.active_downloads:
-                self.active_downloads[pelicula] = {}
-            
-            # Usamos una clave especial para representar la extracción
+            if pelicula not in self.active_downloads: self.active_downloads[pelicula] = {}
+            if "__meta__" not in self.active_downloads[pelicula]:
+                self.active_downloads[pelicula]["__meta__"] = {"total_parts": 1}
+
             clave_fake = "📦 Descomprimiendo..."
-            
             self.active_downloads[pelicula][clave_fake] = {
                 "progress": round(porcentaje, 1),
-                "speed": 0,
-                "downloaded": 0,
-                "total": 0,
-                "status": "extracting",
-                "host": "Local",
-                "debrid": "System"
+                "speed": 0, "downloaded": 0, "total": 0,
+                "status": "extracting", "host": "Local", "debrid": "System"
             }
 
     def clean_extraction(self, pelicula):
@@ -145,12 +146,20 @@ class DownloadMonitor:
                 if "📦 Descomprimiendo..." in self.active_downloads[pelicula]:
                     del self.active_downloads[pelicula]["📦 Descomprimiendo..."]
 
-    # --- CÁLCULOS Y CONFIG ---
+    def init_movie(self, titulo, total_parts):
+        with self._lock:
+            if titulo not in self.active_downloads:
+                self.active_downloads[titulo] = {}
+            self.active_downloads[titulo]["__meta__"] = {
+                "total_parts": total_parts,
+                "created_at": time.time()
+            }
+
     def _recalculate_total_speed(self):
         total = 0.0
         for peli in self.active_downloads.values():
-            for datos in peli.values():
-                # Solo sumamos velocidad si está descargando activamente
+            for key, datos in peli.items():
+                if key == "__meta__": continue
                 if datos.get("status") == "downloading":
                     total += datos["speed"]
         self.total_speed = round(total, 2)
@@ -167,7 +176,6 @@ class DownloadMonitor:
             val = int(n)
             if val < 1: val = 1
             self.dynamic_config["max_parallel"] = val
-            # Notificamos a los hilos bloqueados por si el límite ha aumentado
             self.download_condition.notify_all()
 
     def get_max_parallel(self):
@@ -181,7 +189,9 @@ class DownloadMonitor:
                 "history": self.history,
                 "total_speed": self.total_speed,
                 "config": self.dynamic_config,
-                "completed": list(self.completed_titles)
+                "completed": list(self.completed_titles),
+                "formats": self.movie_formats,
+                "detected": self.detected_movies 
             }
 
 state = DownloadMonitor()

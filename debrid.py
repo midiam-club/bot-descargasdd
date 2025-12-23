@@ -3,7 +3,7 @@ import time
 import requests
 import config
 from urllib.parse import unquote
-from utils import debe_aplicar_limite, sanitizar_nombre # <--- IMPORTANTE
+from utils import debe_aplicar_limite, sanitizar_nombre
 from monitor import state 
 
 def determinar_debrid(enlace):
@@ -59,7 +59,6 @@ def unrestrict_dl(link):
         print(f"   [API] Excepción conectando a DL: {e}")
     return None, None
 
-# --- MODIFICADO: Devuelve 3 valores (url, nombre, servicio) ---
 def obtener_enlace_premium(link):
     servicio_preferido = determinar_debrid(link)
     
@@ -83,8 +82,7 @@ def obtener_enlace_premium(link):
             
     return None, None, None
 
-# --- MODIFICADO: Recibe host y debrid_source ---
-def descargar_archivo(url, carpeta_destino, titulo_referencia, host_original=None, debrid_source=None):
+def descargar_archivo(url, carpeta_destino, titulo_referencia, host_original=None, debrid_source=None, formato_peli=None):
     if not os.path.exists(carpeta_destino):
         os.makedirs(carpeta_destino)
         
@@ -96,6 +94,7 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia, host_original=Non
         print(f"   [SKIP] Archivo ya existe: {nombre_archivo}")
         return ruta_final
 
+    # Bloqueo SEMÁFORO
     print(f"   [ESPERA] Esperando slot de descarga para: {nombre_archivo}...")
     state.acquire_download_slot()
 
@@ -107,10 +106,12 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia, host_original=Non
             r.raise_for_status()
             total_size = int(r.headers.get('content-length', 0))
             
+            # 8MB de buffer para optimizar red
+            chunk_size = 8 * 1024 * 1024 
+            
             with open(ruta_temp, 'wb') as f:
                 start_time = time.time()
                 descargado = 0
-                chunk_size = 8 * 1024 * 1024 
                 
                 for chunk in r.iter_content(chunk_size=chunk_size):
                     if chunk:
@@ -123,9 +124,17 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia, host_original=Non
                         if elapsed > 0:
                             speed_mb = (descargado / (1024 * 1024)) / elapsed
                         
-                        # PASAMOS HOST Y DEBRID AL MONITOR
-                        state.update_download(titulo_referencia, nombre_archivo, descargado, total_size, speed_mb, 
-                                            host=host_original, debrid=debrid_source)
+                        # Actualizamos estado con formato incluido
+                        state.update_download(
+                            titulo_referencia, 
+                            nombre_archivo, 
+                            descargado, 
+                            total_size, 
+                            speed_mb, 
+                            host=host_original, 
+                            debrid=debrid_source,
+                            formato=formato_peli
+                        )
 
                         if config.SPEED_LIMIT_MB > 0 and config.ENABLE_SPEED_LIMIT: 
                              if debe_aplicar_limite():
