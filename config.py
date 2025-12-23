@@ -77,7 +77,7 @@ def _parse_time(time_str):
 
 # Cargamos las horas exactas (Default: 08:00 a 00:00)
 LIMIT_START_TIME = _parse_time(os.getenv("LIMIT_START_TIME", "08:00:00")) or time(8, 0, 0)
-LIMIT_END_TIME = _parse_time(os.getenv("LIMIT_END_TIME", "00:00:00")) or time(0, 0, 0)
+LIMIT_END_TIME = _parse_time(os.getenv("LIMIT_END_TIME", "20:00:00")) or time(0, 0, 0)
 
 # Enrutamiento de Servidores
 # Configuración CONJUNTA: Lista 1 -> RD | Lista 2 -> DL

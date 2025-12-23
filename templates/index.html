@@ -11,6 +11,7 @@
 <body class="bg-gray-900 text-white font-sans" x-data="downloader()">
 
     <div class="container mx-auto p-6 space-y-8">
+        
         <header class="flex flex-col xl:flex-row justify-between items-center border-b border-gray-700 pb-6 gap-6">
             <div>
                 <h1 class="text-3xl font-bold text-blue-400">Panel de Control</h1>
@@ -18,6 +19,7 @@
             </div>
             
             <div class="flex flex-col md:flex-row gap-4">
+                
                 <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 flex items-center gap-4 shadow-lg">
                     <span class="text-sm font-semibold text-purple-300">Simultáneas:</span>
                     <div class="flex items-center gap-2">
@@ -30,14 +32,24 @@
                 <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 flex items-center gap-6 shadow-lg">
                     <div class="flex items-center gap-3">
                         <span class="text-sm font-semibold text-gray-300">Limitador:</span>
-                        <button @click="toggleLimit" class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none" :class="settings.enabled ? 'bg-blue-600' : 'bg-gray-600'">
-                            <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform" :class="settings.enabled ? 'translate-x-6' : 'translate-x-1'"></span>
+                        <button 
+                            @click="toggleLimit"
+                            class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none"
+                            :class="settings.enabled ? 'bg-blue-600' : 'bg-gray-600'"
+                        >
+                            <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform"
+                                  :class="settings.enabled ? 'translate-x-6' : 'translate-x-1'"></span>
                         </button>
                     </div>
+
                     <div class="flex items-center gap-2 border-l border-gray-600 pl-6">
-                        <input type="number" step="0.5" min="0" x-model="settings.limit" class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-center text-white outline-none">
+                        <input type="number" step="0.5" min="0" x-model="settings.limit"
+                               class="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-center text-white outline-none">
                         <span class="text-xs text-gray-400">MB/s</span>
-                        <button @click="saveLimit" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm font-medium transition-colors">OK</button>
+                        <button @click="saveLimit" 
+                                class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm font-medium transition-colors">
+                            OK
+                        </button>
                     </div>
                 </div>
             </div>
@@ -51,16 +63,19 @@
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
             <div class="lg:col-span-2 space-y-6">
                 <h2 class="text-xl font-semibold flex items-center gap-2 text-blue-300">
                     <span>⬇️</span> Tareas en Curso
                 </h2>
+
                 <div x-show="Object.keys(downloads).length === 0" class="bg-gray-800 p-8 rounded-lg text-center border border-gray-700 border-dashed">
                     <p class="text-gray-500">Esperando tareas...</p>
                 </div>
 
                 <template x-for="(files, peli) in downloads" :key="peli">
                     <div class="bg-gray-800 rounded-lg p-5 shadow-lg border border-gray-700 relative overflow-hidden">
+                        
                         <div class="flex justify-between items-end mb-2 relative z-10">
                             <h3 class="text-lg font-bold text-yellow-400 truncate w-3/4" x-text="peli"></h3>
                             <div class="text-right">
@@ -75,36 +90,52 @@
                             </div>
                             <div class="w-full bg-gray-900 rounded-full h-3 relative overflow-hidden border border-gray-600">
                                 <div class="bg-purple-600 h-3 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(147,51,234,0.5)]"
-                                     :style="`width: ${getMovieStats(files).pct}%`"></div>
+                                     :style="`width: ${getMovieStats(files).pct}%`">
+                                </div>
                             </div>
                         </div>
                         
                         <div class="space-y-3 pl-2 border-l-2 border-gray-700 relative z-10">
                             <template x-for="(data, filename) in files" :key="filename">
-                                <div class="bg-gray-900/40 p-2 rounded border border-gray-700/50" 
-                                     :class="data.status === 'extracting' ? 'border-orange-500/50 bg-orange-900/10' : ''"> 
+                                <div class="bg-gray-900/40 p-2 rounded border border-gray-700/50"
+                                     :class="{
+                                        'border-orange-500/50 bg-orange-900/10': data.status === 'extracting',
+                                        'border-green-500/30 bg-green-900/10': data.status === 'completed'
+                                     }">
+                                    
                                     <div class="flex justify-between text-xs mb-1">
-    <div class="flex flex-col truncate w-2/3"> <div class="flex items-center gap-2">
-            <span x-show="data.status === 'extracting'">📦</span>
-            <span x-show="data.status !== 'extracting'">📄</span>
-            <span class="font-mono text-blue-200 truncate" 
-                  :class="data.status === 'extracting' ? 'text-orange-300 font-bold' : ''"
-                  x-text="filename"></span>
-        </div>
-        
-        <div x-show="data.status !== 'extracting' && data.host" class="ml-6 flex items-center gap-2">
-            <span class="text-[10px] text-gray-500" x-text="'(' + data.host + ')'"></span>
-            <span class="text-[10px] font-bold bg-gray-700 px-1 rounded text-blue-300" 
-                  x-text="'[' + data.debrid + ']'"></span>
-        </div>
-    </div>
-    
-    <span x-show="data.status !== 'extracting'" class="text-green-300 self-start" x-text="data.speed + ' MB/s'"></span>
-    <span x-show="data.status === 'extracting'" class="text-orange-400 animate-pulse self-start">Descomprimiendo...</span>
-</div>
+                                        <div class="flex flex-col truncate w-2/3">
+                                            <div class="flex items-center gap-2">
+                                                <span x-show="data.status === 'extracting'">📦</span>
+                                                <span x-show="data.status === 'downloading'">⬇️</span>
+                                                <span x-show="data.status === 'completed'">✅</span>
+                                                
+                                                <span class="font-mono text-blue-200 truncate" 
+                                                      :class="{
+                                                          'text-orange-300 font-bold': data.status === 'extracting',
+                                                          'text-green-300 line-through opacity-70': data.status === 'completed'
+                                                      }"
+                                                      x-text="filename"></span>
+                                            </div>
+                                            
+                                            <div x-show="data.status !== 'extracting' && data.host" class="ml-6 flex items-center gap-2">
+                                                <span class="text-[10px] text-gray-500" x-text="'(' + data.host + ')'"></span>
+                                                <span class="text-[10px] font-bold bg-gray-700 px-1 rounded text-blue-300" x-text="'[' + data.debrid + ']'"></span>
+                                            </div>
+                                        </div>
+                                        
+                                        <span x-show="data.status === 'downloading'" class="text-green-300 self-start" x-text="data.speed + ' MB/s'"></span>
+                                        <span x-show="data.status === 'extracting'" class="text-orange-400 animate-pulse self-start">Descomprimiendo...</span>
+                                        <span x-show="data.status === 'completed'" class="text-gray-400 self-start">Esperando...</span>
+                                    </div>
+                                    
                                     <div class="w-full bg-gray-700 rounded-full h-1.5 relative overflow-hidden">
                                         <div class="h-1.5 rounded-full transition-all duration-500 ease-out"
-                                             :class="data.status === 'extracting' ? 'bg-orange-500' : 'bg-blue-500'"
+                                             :class="{
+                                                 'bg-orange-500': data.status === 'extracting',
+                                                 'bg-blue-500': data.status === 'downloading',
+                                                 'bg-green-500': data.status === 'completed'
+                                             }"
                                              :style="`width: ${data.progress}%`"></div>
                                     </div>
                                     <div class="flex justify-end mt-0.5">
@@ -113,6 +144,7 @@
                                 </div>
                             </template>
                         </div>
+
                     </div>
                 </template>
             </div>
@@ -138,7 +170,11 @@
             <h2 class="text-xl font-semibold mb-4 flex items-center gap-2 text-purple-300">
                 <span>📚</span> Historial (Sesión)
             </h2>
-            <div x-show="Object.keys(history).length === 0" class="text-gray-500 italic text-sm">Vacío.</div>
+
+            <div x-show="Object.keys(history).length === 0" class="text-gray-500 italic text-sm">
+                Aún no se han completado descargas en esta sesión.
+            </div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <template x-for="(files, peli) in history" :key="peli">
                     <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
@@ -179,6 +215,7 @@
                 </template>
             </div>
         </div>
+
     </div>
 
     <script>
@@ -186,7 +223,7 @@
             Alpine.data('downloader', () => ({
                 downloads: {},
                 history: {},
-                completed: [], // Nueva variable para la lista de completados
+                completed: [],
                 totalSpeed: "0.00",
                 settings: { enabled: true, limit: 0, max_parallel: 1 },
                 chart: null,
@@ -204,7 +241,8 @@
                     Object.values(files).forEach(f => {
                         totalDownloaded += f.downloaded;
                         totalSize += f.total;
-                        totalSpeed += f.speed;
+                        // Solo sumamos velocidad si está descargando
+                        if(f.status === 'downloading') totalSpeed += f.speed;
                     });
 
                     let percent = totalSize > 0 ? (totalDownloaded / totalSize) * 100 : 0;
@@ -224,10 +262,8 @@
                         const data = await res.json();
                         this.downloads = data.downloads;
                         this.history = data.history;
+                        this.completed = data.completed || [];
                         
-                        // Cargamos la lista de completados
-                        this.completed = data.completed || []; 
-
                         const rawSpeed = data.total_speed; 
                         this.totalSpeed = rawSpeed.toFixed(2); 
                         this.updateChart(rawSpeed);
@@ -241,7 +277,6 @@
                     } catch (e) { console.error(e); }
                 },
 
-                // ... (resto de funciones toggleLimit, saveLimit, etc. iguales) ...
                 async toggleLimit() {
                     this.settings.enabled = !this.settings.enabled;
                     await this.saveLimit();
@@ -268,8 +303,8 @@
                 initChart() {
                     const ctx = document.getElementById('speedChart').getContext('2d');
                     const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-                    gradient.addColorStop(0, 'rgba(74, 222, 128, 0.5)');
-                    gradient.addColorStop(1, 'rgba(74, 222, 128, 0.0)');
+                    gradient.addColorStop(0, 'rgba(74, 222, 128, 0.5)'); // Verde inicio
+                    gradient.addColorStop(1, 'rgba(74, 222, 128, 0.0)'); // Transparente fin
 
                     this.chart = new Chart(ctx, {
                         type: 'line',
@@ -285,7 +320,11 @@
                             responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
                             interaction: { intersect: false, mode: 'index' },
                             scales: { 
-                                y: { beginAtZero: true, grid: { color: '#374151' }, ticks: { color: '#9ca3af' } }, 
+                                y: { 
+                                    beginAtZero: true, 
+                                    grid: { color: '#374151' },
+                                    ticks: { color: '#9ca3af' }
+                                }, 
                                 x: { display: false } 
                             },
                             plugins: { legend: { display: false } }
