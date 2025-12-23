@@ -110,7 +110,7 @@ def descargar_archivo(url, carpeta_destino, titulo_referencia, host_original=Non
             with open(ruta_temp, 'wb') as f:
                 start_time = time.time()
                 descargado = 0
-                chunk_size = 1024 * 1024 
+                chunk_size = 8 * 1024 * 1024 
                 
                 for chunk in r.iter_content(chunk_size=chunk_size):
                     if chunk:

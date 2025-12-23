@@ -55,7 +55,7 @@ FOROS_PROCESAR = ["250", "142", "143", "164"]
 IDS_IGNORADOS = [""] 
 
 # Paralelismo y Límites
-MAX_WORKERS = int(os.getenv("MAX_PARALLEL_DOWNLOADS", "1"))
+MAX_WORKERS = int(os.getenv("MAX_PARALLEL_DOWNLOADS", "10"))
 
 try:
     SPEED_LIMIT_MB = float(os.getenv("SPEED_LIMIT_MB", "0"))

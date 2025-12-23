@@ -153,11 +153,17 @@ def procesar_carpeta_final(carpeta_destino, titulo_peli, formato_res, titulo_ori
         archivo_cabecera = encontrar_archivo_cabecera(carpeta_destino)
         
         if archivo_cabecera:
+            print(f"      [EXTRAER] Detectado archivo maestro: {archivo_cabecera}")
             ruta_rar = os.path.join(carpeta_destino, archivo_cabecera)
-            print(f"      [EXTRAER] Archivo maestro: {archivo_cabecera}")
             
-            # -bsp1: Muestra progreso en stdout
-            cmd = ["7z", "e", "-bsp1", ruta_rar, f"-o{carpeta_destino}", "-y", f"-p{RAR_PASSWORD}"]
+            # Usamos subprocess.run sin ocultar errores críticos para debug,
+            # pero mantenemos stdout limpio.
+            try:
+                # CAMBIO AQUÍ: 'e' en lugar de 'x' para aplanar la estructura
+                subprocess.run(["7z", "e", ruta_rar, f"-o{carpeta_destino}", "-y"], 
+                               check=True, stdout=subprocess.DEVNULL)
+                print("      [OK] Descompresión finalizada correctamente.")
+            except subprocess.CalledProcessError:
             
             try:
                 # Usamos Popen para leer la salida en tiempo real
