@@ -8,13 +8,16 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 URL_BASE = "https://descargasdd.org"
 
-# --- SELECTORES EXACTOS DEL HTML PROPORCIONADO ---
-# Usamos IDs (#) que son más precisos que los names
-SELECTOR_USER = "#navbar_username"
-SELECTOR_PASS_HINT = "#navbar_password_hint"  # El campo falso que dice "Contraseña"
-SELECTOR_PASS = "#navbar_password"            # El campo real (oculto al principio)
-SELECTOR_LOGIN_BTN = "input.loginbutton"      # Botón de entrar
-SELECTOR_LOGOUT = "text=Finalizar sesión"     # Para comprobar si entró
+# --- SELECTORES PARA LA PÁGINA DE LOGIN COMPLETA ---
+# En login.php?do=login, los names son los más fiables
+SELECTOR_USER = "input[name='vb_login_username']"
+SELECTOR_PASS = "input[name='vb_login_password']"
+SELECTOR_COOKIE = "input[name='cookieuser']" # Checkbox 'Recordarme'
+SELECTOR_LOGIN_BTN = "input.loginbutton, input[value='Iniciar sesión']" 
+SELECTOR_LOGOUT = "text=Finalizar sesión"
+
+# Fallback por si usan el truco del texto superpuesto también aquí
+SELECTOR_PASS_HINT = "input[name='vb_login_password_hint']" 
 
 def espera_humana():
     time.sleep(random.uniform(1.5, 3.0))
@@ -62,53 +65,67 @@ def obtener_cookies_flaresolverr():
         print(f"   [FLARESOLVERR] Error: {e}")
     return None
 
-# --- LOGIN ADAPTADO AL HTML ---
+# --- LOGIN ROBUSTO (Página Completa) ---
 
 def realizar_login(page):
-    print("   [SCRAPER] Iniciando login (NavBar)...")
+    print("   [SCRAPER] Iniciando login en página dedicada...")
+    url_login = f"{URL_BASE}/login.php?do=login"
     
-    # Navegamos a la HOME directamente, ya que el login está en la barra superior (navbar)
     try:
-        page.goto(URL_BASE, wait_until="domcontentloaded", timeout=60000)
+        page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
         
-        # 1. Rellenar Usuario
+        # 1. USUARIO
         print("   [LOGIN] Rellenando usuario...")
-        page.click(SELECTOR_USER) # Click para limpiar el placeholder si lo hubiera
+        # Esperamos a que aparezca el campo de usuario principal
+        page.wait_for_selector(SELECTOR_USER, state="visible", timeout=10000)
         page.fill(SELECTOR_USER, config.FORO_USER)
         espera_humana()
 
-        # 2. Truco del Password (Hint -> Real)
-        print("   [LOGIN] Gestionando campo de contraseña...")
-        
-        # Verificamos si el campo "Hint" (falso) es visible
+        # 2. CONTRASEÑA (Gestión de campo oculto/hint)
+        # A veces vBulletin muestra un campo de texto "Contraseña" y oculta el password real
         if page.locator(SELECTOR_PASS_HINT).is_visible():
-            # Hacemos click en el campo falso "Contraseña"
-            # Esto dispara el JS de la web que oculta el hint y muestra el password real
+            print("   [LOGIN] Detectado campo 'hint' de contraseña. Activando campo real...")
             page.click(SELECTOR_PASS_HINT)
-            
-            # Esperamos un momento a que el campo real se haga visible
-            try:
-                page.wait_for_selector(SELECTOR_PASS, state="visible", timeout=2000)
-            except:
-                print("   [WARN] El campo de password real tardó en aparecer.")
+            # Esperamos que el real se haga visible
+            try: page.wait_for_selector(SELECTOR_PASS, state="visible", timeout=2000)
+            except: pass
 
-        # Ahora rellenamos el campo real
+        print("   [LOGIN] Rellenando contraseña...")
         page.fill(SELECTOR_PASS, config.FORO_PASS)
         espera_humana()
         
-        # 3. Submit
-        print("   [LOGIN] Pulsando entrar...")
-        # Usamos el selector de la clase 'loginbutton' que vimos en tu HTML
-        page.click(SELECTOR_LOGIN_BTN)
-        
+        # 3. RECORDARME (Importante según tu petición)
+        print("   [LOGIN] Marcando casilla 'Recordarme'...")
+        try:
+            # Buscamos el checkbox. A veces hay que forzar el check si es un div estilizado, 
+            # pero en login.php suele ser un input standard.
+            if page.locator(SELECTOR_COOKIE).is_visible():
+                page.check(SELECTOR_COOKIE)
+            else:
+                # Si no es visible directamente, intentamos clickar en su etiqueta
+                # o forzar el check via JS si está oculto
+                page.evaluate("document.querySelector(\"input[name='cookieuser']\").checked = true")
+        except Exception as e:
+            print(f"   [WARN] No se pudo marcar 'Recordarme': {e}")
+
+        # 4. SUBMIT
+        print("   [LOGIN] Enviando formulario...")
+        # Buscamos el botón de submit dentro del formulario activo
+        # A veces hay varios botones de login (navbar y main), nos aseguramos de dar al visible
+        if page.locator(SELECTOR_LOGIN_BTN).count() > 1:
+            # Clickamos el que esté visible y sea interactuable
+            page.locator(SELECTOR_LOGIN_BTN).first.click() 
+        else:
+            page.click(SELECTOR_LOGIN_BTN)
+
         page.wait_for_load_state("domcontentloaded")
         
-        # Verificación
+        # 5. VERIFICACIÓN
         if page.locator(SELECTOR_LOGOUT).is_visible(timeout=10000):
             print("   [SCRAPER] ✅ Login EXITOSO.")
             return True
         
-        print("   [SCRAPER] ❌ Login FALLIDO. Generando captura...")
+        print("   [SCRAPER] ❌ Login FALLIDO. Guardando captura de error...")
         page.screenshot(path=f"{config.DOWNLOAD_DIR}/debug_login_fail.png")
         return False
 
@@ -118,7 +135,7 @@ def realizar_login(page):
         except: pass
         return False
 
-# --- REPARACIÓN Y PROCESADO ---
+# --- REPARACIÓN Y PROCESADO (Idénticos) ---
 
 def reparar_hilos_rotos(page):
     rotas = db.obtener_descargas_sin_enlaces()
@@ -215,6 +232,7 @@ def ejecutar(context):
     
     page = context.new_page()
     try:
+        # SIEMPRE LOGIN (Con nueva lógica login.php)
         if not realizar_login(page):
             print("   [SCRAPER] ABORTANDO: Fallo login.")
             page.close()
