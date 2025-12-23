@@ -1,198 +1,242 @@
 import time
 import re
-import requests
-from playwright.sync_api import sync_playwright
-# Importamos configuración y utilidades
-from config import FORO_USER, FORO_PASS, FLARESOLVERR_URL, SESSION_FILE, FOROS_PROCESAR, IDS_IGNORADOS, PALABRAS_EXCLUIDAS
-from utils import extraer_hilo_id, limpiar_titulo, detectar_formato
+import random
+import config
 import database as db
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-def obtener_cookies_flaresolverr(url):
-    print(f"[*] FlareSolverr solicitando acceso para: {url}")
-    try:
-        payload = {"cmd": "request.get", "url": url, "maxTimeout": 60000}
-        res = requests.post(FLARESOLVERR_URL, json=payload, timeout=70).json()
-        if res.get("status") == "ok":
-            return res["solution"]["cookies"], res["solution"]["userAgent"]
-    except Exception as e: 
-        print(f"   [DEBUG] Excepción FlareSolverr: {e}")
-    return None, None
+# --- CONSTANTES ---
+URL_BASE = "https://descargasdd.org"
+SELECTOR_LOGOUT = "text=Finalizar sesión"
+SELECTOR_USER = "input[name='username']"
+SELECTOR_PASS = "input[name='password']"
+SELECTOR_LOGIN_BTN = "input[value='Iniciar sesión']"
 
-def login(page, context):
-    print("[DEBUG] Verificando Login...")
+# --- UTILIDADES ---
+
+def espera_humana():
+    time.sleep(random.uniform(1.0, 2.5))
+
+def limpiar_texto(txt):
+    if not txt: return ""
+    return txt.strip()
+
+# --- PARSEO DE TÍTULOS ---
+
+def analizar_titulo(titulo_hilo):
+    """
+    Intenta extraer Título, Año y Formato del asunto del hilo.
+    Ej: "Dune: Parte Dos (2024) [BluRay 1080p X265 10bit]..."
+    """
+    titulo_hilo = titulo_hilo.replace(":", " ") # Limpieza básica
+    
+    # 1. Extraer AÑO
+    match_anio = re.search(r'\((\d{4})\)', titulo_hilo)
+    anio = match_anio.group(1) if match_anio else ""
+    
+    # 2. Extraer FORMATO (Lógica simple basada en keywords)
+    formato = "1080p" # Default
+    upper_tit = titulo_hilo.upper()
+    
+    if "2160P" in upper_tit or "4K" in upper_tit or "UHD" in upper_tit:
+        formato = "2160p"
+    elif "X265" in upper_tit or "HEVC" in upper_tit:
+        formato = "x265"
+    elif "M1080P" in upper_tit or "MICRO" in upper_tit:
+        formato = "m1080p"
+    
+    # 3. Limpiar TÍTULO (Quitar lo que hay después del año o corchetes)
+    # Si encontramos el año, cortamos ahí
+    if anio:
+        parts = titulo_hilo.split(f"({anio})")
+        titulo_base = parts[0].strip()
+    else:
+        # Si no hay año, intentamos cortar en el primer corchete
+        titulo_base = titulo_hilo.split('[')[0].strip()
+
+    return titulo_base, anio, formato
+
+def extraer_enlaces_post(contenido_html):
+    """
+    Busca enlaces de los hosters soportados dentro del HTML del post.
+    """
+    enlaces_encontrados = []
+    # Regex simple para buscar URLs http/https
+    urls = re.findall(r'https?://[^\s<>"\'\]]+', contenido_html)
+    
+    for url in urls:
+        # Filtramos solo dominios que nos interesan (definidos en config)
+        for dominio in config.HOSTER_PREFS.keys():
+            if dominio in url.lower():
+                enlaces_encontrados.append(url)
+                break
+    
+    return list(set(enlaces_encontrados)) # Eliminar duplicados
+
+# --- NAVEGACIÓN Y SESIÓN ---
+
+def validar_sesion(page):
+    print("   [SCRAPER] Verificando estado de la sesión...")
     try:
-        page.goto("https://descargasdd.org/index.php", wait_until="commit")
-        time.sleep(2)
+        page.goto(URL_BASE, timeout=60000, wait_until="domcontentloaded")
+        if page.locator(SELECTOR_LOGOUT).is_visible(timeout=5000):
+            print("   [SCRAPER] ✅ Sesión VÁLIDA. Saltando login.")
+            return True
+        print("   [SCRAPER] ⚠️ Sesión CADUCADA o INEXISTENTE.")
+        return False
+    except: return False
+
+def realizar_login(page):
+    print("   [SCRAPER] Iniciando proceso de login...")
+    try:
+        if "login" not in page.url:
+            page.goto(f"{URL_BASE}/login.php", wait_until="domcontentloaded")
+
+        page.fill(SELECTOR_USER, config.FORO_USER)
+        espera_humana()
+        page.fill(SELECTOR_PASS, config.FORO_PASS)
+        espera_humana()
+        page.click(SELECTOR_LOGIN_BTN)
+        page.wait_for_load_state("domcontentloaded")
         
-        try:
-            if page.query_selector(f"text='{FORO_USER}'") or page.query_selector('a[href*="logout"]'): 
-                print(f"   [DEBUG] ✅ Ya estamos logueados.")
-                return True
-        except: pass
-        
-        print("[!] Intentando login manual...")
-        page.wait_for_selector('#navbar_username', state="visible", timeout=5000)
-        page.fill('#navbar_username', FORO_USER)
-        page.click('#navbar_password_hint')
-        page.fill('#navbar_password', FORO_PASS)
-        page.check('#cb_cookieuser_navbar')
-        page.click('input.loginbutton')
-        page.wait_for_timeout(5000)
-        
-        if page.query_selector(f"text='{FORO_USER}'") or page.query_selector('a[href*="logout"]'):
-            print("   [DEBUG] ✅ Login EXITOSO.")
-            context.storage_state(path=SESSION_FILE)
+        if page.locator(SELECTOR_LOGOUT).is_visible():
+            print("   [SCRAPER] ✅ Login EXITOSO.")
             return True
         else:
-            print("   [DEBUG] ❌ Login FALLIDO.")
+            print("   [SCRAPER] ❌ Login FALLIDO.")
             return False
-    except Exception as e: 
-        print(f"   [DEBUG] Excepción Login: {e}")
+    except Exception as e:
+        print(f"   [!] Excepción login: {e}")
         return False
 
-def extraer_enlaces_agresivo(contenedor):
-    links = set()
+# --- PROCESADO DE HILOS ---
+
+def procesar_hilo(page, url_hilo, titulo_raw, foro_id):
+    """Entra en un hilo, extrae enlaces y guarda en DB"""
     try:
-        html_content = contenedor.inner_html()
-        patron = r'https?://[^\s"<>\)\]]+'
-        encontrados = re.findall(patron, html_content)
+        # 1. Analizar título
+        titulo_base, anio, formato = analizar_titulo(titulo_raw)
         
-        for l in encontrados:
-            l = l.strip()
-            if "descargasdd.org" in l: continue
-            if "flaresolverr" in l: continue
-            if l.endswith((".png", ".jpg", ".gif", ".jpeg", ".bmp")): continue
-            links.add(l)
-    except: pass
-    return links
+        # Filtros de exclusión (Blacklist)
+        for palabra in config.PALABRAS_EXCLUIDAS:
+            if palabra in titulo_raw.upper():
+                # print(f"      [SKIP] Excluido por palabra clave: {palabra}")
+                return
 
-def procesar_detalle_hilo(page, url_hilo):
-    print(f"      [HILO] Analizando: {url_hilo}")
-    try:
-        page.goto(url_hilo, wait_until="domcontentloaded")
-        links_totales = set()
+        # 2. Gestión de IDs en DB
+        conn = db.get_connection()
+        cur = conn.cursor()
         
-        elementos = page.query_selector_all('div[id^="post_message_"]')
-        if not elementos: return None
-        ids = [el.get_attribute("id").replace("post_message_", "") for el in elementos][:1]
+        # Verificar si la peli base ya existe en metadatos
+        meta = db.buscar_pelicula_meta(cur, titulo_base)
+        if meta:
+            peli_id = meta[0]
+        else:
+            # Insertar nueva peli
+            print(f"      [NUEVA PELI] {titulo_base} ({anio})")
+            peli_id = db.insertar_pelicula_meta(conn, cur, titulo_base)
         
-        for post_id in ids:
-            xpath = f"//div[@id='post_message_{post_id}']/ancestor::li[contains(@class,'postbit')] | //div[@id='post_message_{post_id}']/.."
-            contenedor = page.locator(xpath).first
-            
-            btn = page.locator(f"#post_thanks_button_{post_id}")
-            if btn.is_visible():
-                try:
-                    btn.click()
-                    page.wait_for_timeout(2000)
-                    texto = contenedor.inner_text().lower()
-                    if "contenido oculto" in texto or "bloqueado" in texto:
-                        page.reload()
-                        page.wait_for_timeout(3000)
-                        contenedor = page.locator(xpath).first
-                except: pass
-            
-            links = extraer_enlaces_agresivo(contenedor)
-            if links: links_totales.update(links)
-
-        return "\n".join(links_totales) if links_totales else None
-    except: return None
-
-# --- FUNCIÓN PRINCIPAL RESTAURADA CON PAGINACIÓN ---
-def ejecutar_scraping_completo(conn):
-    cookies, ua = obtener_cookies_flaresolverr("https://descargasdd.org/index.php")
-    
-    user_agent_final = ua if ua else config.DEFAULT_USER_AGENT
-    
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent=user_agent_final)
-        if cookies:
-            context.add_cookies([{"name": c["name"], "value": c["value"], "domain": c["domain"].lstrip('.'), "path": c["path"], "secure": True} for c in cookies])
-            
-        page = context.new_page()
-        if not login(page, context):
-            print("[CRITICAL] Login fallido. Abortando.")
+        # Extraer ID del hilo desde la URL (ej: showthread.php?t=12345)
+        match_id = re.search(r't=(\d+)', url_hilo)
+        hilo_id = match_id.group(1) if match_id else "0"
+        
+        # Verificar si ya tenemos esta descarga específica (por hilo_id)
+        descarga_existente = db.buscar_descarga(cur, hilo_id)
+        
+        # Si ya existe y tiene enlaces, pasamos (asumimos procesada)
+        if descarga_existente and descarga_existente[0] and len(descarga_existente[0]) > 10:
+            cur.close()
+            conn.close()
             return
 
-        cur = conn.cursor()
-
-        for foro_act in FOROS_PROCESAR:
-            print(f"\n[*] --- ESCANEANDO FORO {foro_act} ---")
-            pagina_actual = 1
-            
-            # BUCLE DE PAGINACIÓN (WHILE TRUE)
-            while True:
-                url_foro = f"https://descargasdd.org/forumdisplay.php?f={foro_act}&page={pagina_actual}"
-                print(f"    > Procesando Página {pagina_actual}...")
-                
-                try:
-                    page.goto(url_foro, wait_until="domcontentloaded")
-                except: 
-                    print("    [!] Error cargando página. Saltando foro.")
-                    break
-
-                # Detectar hilos
-                hilos = page.query_selector_all('a[id^="thread_title_"]')
-                if not hilos:
-                    print("    [!] No se detectaron hilos (Fin o bloqueo).")
-                    break
-                
-                lista_candidatos = []
-                for el in hilos:
-                    try:
-                        t = el.inner_text().strip()
-                        href = el.get_attribute("href")
-                        hid = extraer_hilo_id(href)
-                        
-                        # Filtros (Palabras negras y 720p)
-                        t_upper = t.upper()
-                        if any(bad in t_upper for bad in PALABRAS_EXCLUIDAS): continue
-                        
-                        lista_candidatos.append({"t": t, "u": f"https://descargasdd.org/{href}", "id": hid})
-                    except: pass
-
-                # Procesar candidatos de esta página
-                nuevos_en_esta_pagina = 0
-                for item in lista_candidatos:
-                    # 1. Comprobar si ya existe con enlaces válidos
-                    res = db.buscar_descarga(cur, item["id"])
-                    if res and res[0] and len(res[0]) > 5:
-                        # Ya lo tenemos, saltamos
-                        continue
-                    
-                    nuevos_en_esta_pagina += 1
-                    
-                    # 2. Insertar Metadatos
-                    t_limpio = limpiar_titulo(item["t"])
-                    pid_res = db.buscar_pelicula_meta(cur, t_limpio)
-                    if pid_res: pid = pid_res[0]
-                    else: pid = db.insertar_pelicula_meta(conn, cur, t_limpio)
-                    
-                    fmt = detectar_formato(item["t"], foro_act)
-                    db.insertar_descarga_hueco(conn, cur, pid, foro_act, item["id"], fmt, item["t"])
-                    
-                    # 3. Entrar y sacar enlaces
-                    enlaces = procesar_detalle_hilo(page, item["u"])
-                    if enlaces:
-                        db.actualizar_enlaces(conn, cur, item["id"], enlaces)
-                        print(f"      [DB] Guardado: {t_limpio}")
-                    
-                    time.sleep(0.5) # Pequeña pausa entre hilos
-
-                print(f"    > Página {pagina_actual} completada. Nuevos procesados: {nuevos_en_esta_pagina}")
-
-                # COMPROBACIÓN "SIGUIENTE PÁGINA"
-                # Buscamos el botón 'Siguiente' o 'Next' (suele tener rel="next")
-                try:
-                    siguiente = page.query_selector('a[rel="next"]')
-                    if siguiente:
-                        pagina_actual += 1
-                        time.sleep(1) # Pausa entre páginas del foro
-                    else:
-                        print("    [FIN] No hay más páginas en este foro.")
-                        break
-                except:
-                    break
-
+        # 3. Entrar al hilo y extraer enlaces
+        # print(f"      [SCRAP] Procesando hilo: {titulo_raw[:40]}...")
+        page.goto(url_hilo, wait_until="domcontentloaded")
+        
+        # Selector del contenido del primer post
+        content_html = page.inner_html("div.postcontent", timeout=5000)
+        enlaces = extraer_enlaces_post(content_html)
+        
+        if enlaces:
+            str_enlaces = "\n".join(enlaces)
+            # Guardamos o actualizamos en DB
+            if descarga_existente:
+                db.actualizar_enlaces(conn, cur, hilo_id, str_enlaces)
+                print(f"      [UPDATE] Enlaces actualizados para: {titulo_base} [{formato}]")
+            else:
+                db.insertar_descarga_hueco(conn, cur, peli_id, foro_id, hilo_id, formato, titulo_raw)
+                db.actualizar_enlaces(conn, cur, hilo_id, str_enlaces)
+                print(f"      [GUARDADO] {titulo_base} [{formato}] ({len(enlaces)} enlaces)")
+        
         cur.close()
+        conn.close()
+        espera_humana()
+
+    except Exception as e:
+        print(f"      [!] Error procesando hilo {url_hilo}: {e}")
+
+def procesar_foro(page, foro_id):
+    """Recorre la lista de hilos de un subforo"""
+    url_foro = f"{URL_BASE}/forumdisplay.php?f={foro_id}&order=desc"
+    print(f"   [SCRAPER] Entrando al Foro ID {foro_id}...")
+    
+    try:
+        page.goto(url_foro, wait_until="domcontentloaded")
+        
+        # Selectores para vBulletin 4 (común en DD)
+        # Buscamos los elementos de la lista de temas
+        # Ajusta el selector "li.threadbit" si el theme cambia
+        hilos = page.locator("li.threadbit").all()
+        
+        # Limitamos a los primeros 10-15 hilos para no saturar en cada pasada
+        count = 0
+        max_hilos = 15 
+        
+        for hilo in hilos:
+            if count >= max_hilos: break
+            
+            try:
+                # Extraer título y URL sin navegar aún
+                elemento_titulo = hilo.locator("a.title")
+                if not elemento_titulo.is_visible(): continue
+                
+                texto_titulo = elemento_titulo.inner_text().strip()
+                href_parcial = elemento_titulo.get_attribute("href")
+                
+                if "adhierido" in texto_titulo.lower() or "importante" in texto_titulo.lower():
+                    continue
+
+                url_completa = f"{URL_BASE}/{href_parcial}"
+                
+                # Procesamos el hilo individualmente
+                procesar_hilo(page, url_completa, texto_titulo, foro_id)
+                count += 1
+                
+            except Exception as e:
+                continue
+
+    except Exception as e:
+        print(f"   [!] Error leyendo el índice del foro {foro_id}: {e}")
+
+# --- PUNTO DE ENTRADA ---
+
+def ejecutar(context):
+    page = context.new_page()
+    try:
+        # 1. Login Inteligente
+        if not validar_sesion(page):
+            if not realizar_login(page):
+                page.close()
+                return 
+
+        # 2. Iterar Foros
+        if hasattr(config, 'FOROS_PROCESAR'):
+            for fid in config.FOROS_PROCESAR:
+                procesar_foro(page, fid)
+                espera_humana()
+        
+    except Exception as e:
+        print(f"   [!] Error CRÍTICO en scraper: {e}")
+    finally:
+        try: page.close()
+        except: pass

@@ -31,7 +31,7 @@ def obtener_contexto_navegador(browser):
 def guardar_sesion(context):
     try: 
         context.storage_state(path=config.SESSION_FILE)
-        print(f"   [SESIÓN] Cookies guardadas en: {config.SESSION_FILE}")
+        print(f"   [SESIÓN] Cookies guardadas/actualizadas en: {config.SESSION_FILE}")
     except Exception as e: 
         print(f"   [!] Error guardando sesión: {e}")
 
@@ -152,14 +152,12 @@ def worker_descarga_pelicula(pid, datos_peli):
         if fmt in mapa:
             if intentar_descarga(mapa[fmt], titulo):
                 db.marcar_cascada_descargado(pid, fmt)
-                # IMPORTANTE: Pasamos fmt para que el historial lo marque bien
                 state.mark_completed(titulo, fmt)
                 return 
     
     if "2160p" in mapa:
         if intentar_descarga(mapa["2160p"], titulo):
             db.marcar_cascada_descargado(pid, "2160p")
-            # IMPORTANTE: Pasamos fmt para que el historial lo marque bien
             state.mark_completed(titulo, "2160p")
 
     print(f"[Worker {pid}] 🏁 Finalizado flujo para: {titulo}")
@@ -171,10 +169,17 @@ def flujo_descargas(context):
     print("\n[*] --- BUSCANDO NOVEDADES EN FOROS ---")
     try:
         scraper.ejecutar(context) 
-        print("[*] Scraping finalizado.")
+        print("[*] Scraping finalizado. Guardando sesión...")
+        # CAMBIO 1: Guardamos sesión INMEDIATAMENTE tras el scraping exitoso
+        guardar_sesion(context)
+        
     except Exception as e:
         print(f"[!] Error durante el scraping: {e}")
+        # CAMBIO 2: Guardamos sesión INCLUSO SI FALLA (por si el login sí funcionó antes del error)
+        print("[*] Intentando salvar sesión tras error...")
+        guardar_sesion(context)
 
+    # 2. ACTUALIZAR NOVEDADES
     ultimas_novedades = db.obtener_ultimas_novedades(12)
     detected_list = []
     if ultimas_novedades:
@@ -193,6 +198,7 @@ def flujo_descargas(context):
             })
     state.set_detected_movies(detected_list)
 
+    # 3. PROCESAR COLA
     print("[*] --- PROCESANDO COLA DE DESCARGAS ---")
     conn = db.get_connection()
     cur = conn.cursor()
@@ -245,6 +251,7 @@ def main():
         context = obtener_contexto_navegador(browser)
         print("[*] Bot iniciado. Iniciando ciclo completo...")
         flujo_descargas(context)
+        # Guardado final de seguridad
         guardar_sesion(context)
         browser.close()
 
