@@ -4,15 +4,12 @@ from config import DB_CONFIG
 def get_connection():
     return psycopg2.connect(**DB_CONFIG)
 
-# --- FUNCIÓN "DUMMY" PARA EVITAR EL CRASH ---
+# --- FUNCIÓN "DUMMY" ---
 def init_db():
-    """
-    Función vacía para satisfacer la llamada en main.py.
-    """
     print("[DB] Modo: Tablas existentes. Omitiendo inicialización.")
     pass 
 
-# --- FUNCIONES DE GESTIÓN (Tus funciones originales) ---
+# --- FUNCIONES DE GESTIÓN ---
 
 def buscar_pelicula_meta(cur, titulo_limpio):
     cur.execute("SELECT id FROM peliculas_meta WHERE LOWER(titulo_base)=LOWER(%s)", (titulo_limpio,))
@@ -34,7 +31,7 @@ def insertar_descarga_hueco(conn, cur, peli_id, foro_id, hilo_id, formato, titul
             INSERT INTO descargas (pelicula_id, foro_id, hilo_id, formato, titulo_original, descargado)
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (hilo_id) DO NOTHING;
-        """, (peli_id, int(foro_id), hilo_id, formato, titulo_raw, False))
+        """, (peli_id, int(foro_id), hilo_id, formato, titulo_raw, 0)) 
         conn.commit()
     except: conn.rollback()
 
@@ -58,14 +55,49 @@ def marcar_como_descargado(did):
         return False
 
 def obtener_pendientes(cur):
-    # Tu query original
-    cur.execute("""
+    query = """
         SELECT d.id, m.id as pid, m.titulo_base, d.formato, d.enlaces, d.titulo_original
         FROM descargas d
         JOIN peliculas_meta m ON d.pelicula_id = m.id
-        WHERE d.descargado = FALSE AND d.enlaces IS NOT NULL AND length(d.enlaces) > 10
-    """)
-    return cur.fetchall()
+        WHERE d.descargado = 0 
+          AND d.enlaces IS NOT NULL 
+          AND length(d.enlaces) > 10
+    """
+    cur.execute(query)
+    resultados = cur.fetchall()
+    
+    if not resultados:
+        cur.execute("SELECT count(*) FROM descargas WHERE descargado = 0")
+        pendientes_totales = cur.fetchone()[0]
+        # Mensaje de debug solo si hay pendientes pero no salen en la query principal (por falta de links)
+        if pendientes_totales > 0:
+            print(f"   [DB DEBUG] Info: Hay {pendientes_totales} descargas pendientes en total (algunas pueden no tener enlaces aún).")
+            
+    return resultados
+
+# --- NUEVA FUNCIÓN: DETECTAR ROTAS ---
+def obtener_descargas_sin_enlaces():
+    """
+    Busca descargas que están marcadas como pendientes (0) pero no tienen enlaces válidos.
+    Retorna lista de (hilo_id, titulo_original)
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        query = """
+            SELECT hilo_id, titulo_original 
+            FROM descargas 
+            WHERE descargado = 0 
+              AND (enlaces IS NULL OR length(enlaces) < 10)
+        """
+        cur.execute(query)
+        return cur.fetchall()
+    except Exception as e:
+        print(f"[DB Error] Buscando rotas: {e}")
+        return []
+    finally:
+        cur.close()
+        conn.close()
 
 def marcar_cascada_descargado(pid, formato_descargado):
     try:
@@ -93,12 +125,7 @@ def marcar_cascada_descargado(pid, formato_descargado):
         print(f"[DB Error] Cascada fallida: {e}")
         return False
 
-# --- NUEVA FUNCIÓN PARA EL DASHBOARD (ADAPTADA) ---
 def obtener_ultimas_novedades(limit=12):
-    """
-    Obtiene las últimas N entradas combinando descargas y peliculas_meta.
-    Ordenadas por ID de descarga descendente (las más recientes añadidas).
-    """
     conn = get_connection()
     cur = conn.cursor()
     try:

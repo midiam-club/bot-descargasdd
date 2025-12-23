@@ -14,7 +14,6 @@
         ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
         
-        /* Animación para la barra de descompresión */
         @keyframes stripes {
             from { background-position: 0 0; }
             to { background-position: 20px 20px; }
@@ -30,12 +29,13 @@
 
     <div class="flex h-full">
         
-        <aside class="w-80 bg-gray-800 border-r border-gray-700 flex flex-col p-6 gap-8 shadow-2xl z-20">
-            <div class="flex justify-center">
-                <img src="/static/sidebar-logo.png" alt="Logo" class="h-12">
+        <aside class="w-80 bg-gray-800 border-r border-gray-700 flex flex-col p-6 gap-6 shadow-2xl z-20">
+            
+            <div class="w-full mb-2">
+                <img src="/static/sidebar-logo.png" alt="Logo" class="w-full h-auto object-contain drop-shadow-xl rounded-lg">
             </div>
 
-            <div class="bg-gray-900/50 p-4 rounded-xl border border-gray-700 text-center">
+            <div class="bg-gray-900/50 p-4 rounded-xl border border-gray-700 text-center shadow-inner">
                 <p class="text-xs text-gray-400 uppercase tracking-widest mb-1">Velocidad Actual</p>
                 <div class="flex items-baseline justify-center gap-1">
                     <span class="text-4xl font-mono font-bold text-green-400" x-text="totalSpeed">0.0</span>
@@ -47,18 +47,18 @@
                 <h3 class="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
                     <span>📈</span> Actividad de Red
                 </h3>
-                <div class="relative flex-1 w-full bg-gray-900 rounded-lg border border-gray-700 p-2">
+                <div class="relative flex-1 w-full bg-gray-900 rounded-lg border border-gray-700 p-2 shadow-inner">
                     <canvas id="speedChart"></canvas>
                 </div>
             </div>
 
-            <div class="space-y-6">
+            <div class="space-y-6 bg-gray-900/30 p-4 rounded-xl border border-gray-700/50">
                 <div class="space-y-2">
                     <label class="text-xs font-semibold text-purple-300 uppercase">Hilos Simultáneos</label>
-                    <div class="flex items-center justify-between bg-gray-900 p-2 rounded border border-gray-700">
-                        <button @click="changeParallel(-1)" class="w-8 h-8 rounded bg-gray-800 hover:bg-gray-700 text-white font-bold transition">-</button>
-                        <span class="text-xl font-mono font-bold" x-text="settings.max_parallel">...</span>
-                        <button @click="changeParallel(1)" class="w-8 h-8 rounded bg-gray-800 hover:bg-gray-700 text-white font-bold transition">+</button>
+                    <div class="flex items-center justify-between bg-gray-900 p-2 rounded border border-gray-700 shadow-sm">
+                        <button @click="changeParallel(-1)" class="w-8 h-8 rounded bg-gray-800 hover:bg-gray-700 text-white font-bold transition flex items-center justify-center">-</button>
+                        <span class="text-xl font-mono font-bold text-white" x-text="settings.max_parallel">10</span>
+                        <button @click="changeParallel(1)" class="w-8 h-8 rounded bg-gray-800 hover:bg-gray-700 text-white font-bold transition flex items-center justify-center">+</button>
                     </div>
                 </div>
 
@@ -70,13 +70,13 @@
                         </button>
                     </div>
                     <div class="flex items-center gap-2">
-                        <input type="number" step="0.5" min="0" x-model="settings.limit" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-center text-white outline-none focus:border-blue-500 transition">
+                        <input type="number" step="0.5" min="0" x-model="settings.limit" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-center text-white outline-none focus:border-blue-500 transition font-mono">
                         <button @click="saveLimit" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded text-sm font-bold transition">OK</button>
                     </div>
                 </div>
             </div>
 
-            <div class="text-center text-[10px] text-gray-600 mt-auto">v2.7 &bull; Dockerized</div>
+            <div class="text-center text-[10px] text-gray-600 mt-auto">v2.8 &bull; Dockerized</div>
         </aside>
 
         <main class="flex-1 flex flex-col overflow-hidden bg-gray-900 relative">
@@ -92,7 +92,7 @@
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         <template x-for="(mov, idx) in detected" :key="idx">
-                            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-gray-600 transition shadow-lg group">
+                            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-gray-600 transition shadow-lg group hover:bg-gray-750">
                                 <div class="flex justify-between items-start mb-2">
                                     <span class="text-xs font-bold text-gray-500" x-text="mov.anio"></span>
                                     <span class="px-2 py-0.5 rounded bg-pink-900/30 border border-pink-500/30 text-pink-300 text-[10px] font-bold uppercase" x-text="mov.formato"></span>
@@ -139,16 +139,13 @@
                                 </div>
 
                                 <div class="mb-6 relative z-10 bg-gray-900/50 p-3 rounded-lg border border-gray-700/50">
-                                    
                                     <div class="flex justify-between text-xs text-gray-400 mb-2">
-                                        
                                         <template x-if="getMovieStats(files).isExtracting">
                                             <span class="uppercase tracking-wider font-bold text-orange-400">Descomprimiendo</span>
                                         </template>
                                         <template x-if="!getMovieStats(files).isExtracting">
                                             <span class="uppercase tracking-wider font-semibold text-purple-400">Progreso Descarga</span>
                                         </template>
-
                                         <span class="font-mono" x-text="getMovieStats(files).text"></span>
                                     </div>
 
@@ -156,7 +153,6 @@
                                         <div x-show="!getMovieStats(files).isExtracting"
                                              class="bg-gradient-to-r from-purple-600 to-blue-500 h-4 rounded-full transition-all duration-500 ease-out shadow-[0_0_15px_rgba(147,51,234,0.3)]"
                                              :style="`width: ${getMovieStats(files).pct}%`"></div>
-                                        
                                         <div x-show="getMovieStats(files).isExtracting"
                                              class="bg-orange-500 h-4 rounded-full transition-all duration-300 ease-out shadow-[0_0_15px_rgba(249,115,22,0.5)] animate-stripes"
                                              :style="`width: ${getMovieStats(files).pct}%`"></div>
@@ -167,9 +163,7 @@
                                     <template x-for="(data, filename) in filterFiles(files)" :key="filename">
                                         <div x-show="filename !== '📦 Descomprimiendo...'" 
                                              class="bg-gray-900/60 p-3 rounded-md border border-gray-700/50 flex flex-col gap-2 transition hover:bg-gray-900"
-                                             :class="{
-                                                'border-green-500/30': data.status === 'completed'
-                                             }">
+                                             :class="{'border-green-500/30': data.status === 'completed'}">
                                             
                                             <div class="flex justify-between text-xs items-center">
                                                 <div class="flex items-center gap-3 truncate max-w-[70%]">
@@ -177,11 +171,9 @@
                                                         <span x-show="data.status === 'downloading'">⬇️</span>
                                                         <span x-show="data.status === 'completed'">✅</span>
                                                     </div>
-                                                    
                                                     <span class="font-mono text-gray-300 truncate text-sm" 
                                                           :class="data.status === 'completed' ? 'line-through opacity-50' : ''"
                                                           x-text="filename"></span>
-                                                    
                                                     <div class="hidden sm:flex items-center gap-2 opacity-70 ml-2">
                                                         <div x-show="data.host" class="flex items-center gap-1">
                                                             <span class="text-[10px] text-gray-500" x-text="data.host"></span>
@@ -190,19 +182,14 @@
                                                         <span class="text-[10px] text-gray-400 border-l border-gray-600 pl-2" x-text="formatSize(data.total)"></span>
                                                     </div>
                                                 </div>
-
                                                 <div class="text-right min-w-[80px]">
                                                     <span x-show="data.status === 'downloading'" class="text-green-400 font-mono" x-text="data.speed + ' MB/s'"></span>
                                                     <span x-show="data.status === 'completed'" class="text-gray-500 font-semibold">LISTO</span>
                                                 </div>
                                             </div>
-                                            
                                             <div class="w-full bg-gray-800 rounded-full h-1 overflow-hidden">
                                                 <div class="h-1 rounded-full transition-all duration-300"
-                                                     :class="{
-                                                         'bg-blue-500': data.status === 'downloading',
-                                                         'bg-green-500': data.status === 'completed'
-                                                     }"
+                                                     :class="{ 'bg-blue-500': data.status === 'downloading', 'bg-green-500': data.status === 'completed' }"
                                                      :style="`width: ${data.progress}%`"></div>
                                             </div>
                                         </div>
@@ -266,7 +253,8 @@
                 formats: {}, 
                 detected: [],
                 totalSpeed: "0.00",
-                settings: { enabled: true, limit: 0, max_parallel: 1 },
+                // CONFIGURACIÓN INICIAL POR DEFECTO A 10 (Se actualiza al conectar)
+                settings: { enabled: true, limit: 0, max_parallel: 10 },
                 chart: null,
 
                 init() {
@@ -289,48 +277,30 @@
                 getMovieStats(files) {
                     const meta = files.__meta__ || { total_parts: 1 };
                     const totalExpected = meta.total_parts;
-                    
                     let totalSpeed = 0;
                     let completedParts = 0;
                     let partialProgressSum = 0;
                     let downloadedBytes = 0;
-                    
-                    // --- DETECCIÓN DE EXTRACCIÓN ---
-                    // Buscamos si existe la key especial de descompresión
                     let extractionEntry = files["📦 Descomprimiendo..."];
                     let isExtracting = !!extractionEntry;
                     
                     Object.entries(files).forEach(([key, f]) => {
-                        if (key === '__meta__') return;
-                        if (key === '📦 Descomprimiendo...') return; // No sumar al download total
-                        
+                        if (key === '__meta__' || key === '📦 Descomprimiendo...') return;
                         downloadedBytes += f.downloaded;
                         if(f.status === 'downloading') totalSpeed += f.speed;
                         if (f.status === 'completed') completedParts += 1;
                         else if (f.status === 'downloading') partialProgressSum += (f.progress / 100);
                     });
 
-                    // SI ESTÁ DESCOMPRIMIENDO, LA BARRA MUESTRA EL PROGRESO DE UNRAR
                     if (isExtracting) {
-                        return {
-                            pct: extractionEntry.progress,
-                            speed: 0,
-                            isExtracting: true,
-                            text: `Extrayendo: ${extractionEntry.progress}%`
-                        };
+                        return { pct: extractionEntry.progress, speed: 0, isExtracting: true, text: `Extrayendo: ${extractionEntry.progress}%` };
                     }
 
-                    // SI NO, MUESTRA EL DE DESCARGA NORMAL
                     let rawPercent = ((completedParts + partialProgressSum) / totalExpected) * 100;
                     if (rawPercent > 100) rawPercent = 100;
                     const downloadedGB = (downloadedBytes / 1024).toFixed(2);
                     
-                    return {
-                        pct: rawPercent.toFixed(1),
-                        speed: totalSpeed.toFixed(1),
-                        isExtracting: false,
-                        text: `${downloadedGB} GB | ${completedParts}/${totalExpected} Partes`
-                    };
+                    return { pct: rawPercent.toFixed(1), speed: totalSpeed.toFixed(1), isExtracting: false, text: `${downloadedGB} GB | ${completedParts}/${totalExpected} Partes` };
                 },
 
                 async fetchData() {
@@ -342,15 +312,14 @@
                         this.completed = data.completed || [];
                         this.formats = data.formats || {}; 
                         this.detected = data.detected || [];
-                        
-                        const rawSpeed = data.total_speed; 
-                        this.totalSpeed = rawSpeed.toFixed(2); 
-                        this.updateChart(rawSpeed);
+                        this.totalSpeed = data.total_speed.toFixed(2); 
+                        this.updateChart(data.total_speed);
                         
                         if (document.activeElement.type !== 'number') {
                              this.settings.limit = data.config.limit_value;
                         }
                         this.settings.enabled = data.config.limit_enabled;
+                        // Si el backend envía el valor correcto, esto sobrescribirá el 10
                         this.settings.max_parallel = data.config.max_parallel;
 
                     } catch (e) { console.error(e); }
@@ -360,19 +329,16 @@
                     this.settings.enabled = !this.settings.enabled;
                     await this.saveLimit();
                 },
-
                 async saveLimit() {
                     await fetch('/api/settings/limit', {
                         method: 'POST', headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({enabled: this.settings.enabled, limit: this.settings.limit})
                     });
                 },
-
                 async changeParallel(delta) {
                     let newVal = this.settings.max_parallel + delta;
                     if (newVal < 1) newVal = 1;
                     this.settings.max_parallel = newVal;
-                    
                     await fetch('/api/settings/parallel', {
                         method: 'POST', headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({max_parallel: newVal})
@@ -384,41 +350,24 @@
                     const gradient = ctx.createLinearGradient(0, 0, 0, 150);
                     gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)'); 
                     gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
-
                     this.chart = new Chart(ctx, {
                         type: 'line',
                         data: {
                             labels: Array(30).fill(''), 
                             datasets: [{
-                                label: 'MB/s', 
-                                data: Array(30).fill(0),
-                                borderColor: '#3b82f6', 
-                                backgroundColor: gradient,
-                                borderWidth: 2, 
-                                tension: 0.3, 
-                                fill: true, 
-                                pointRadius: 0
+                                label: 'MB/s', data: Array(30).fill(0),
+                                borderColor: '#3b82f6', backgroundColor: gradient,
+                                borderWidth: 2, tension: 0.3, fill: true, pointRadius: 0
                             }]
                         },
                         options: {
-                            responsive: true, 
-                            maintainAspectRatio: false, 
-                            animation: false,
+                            responsive: true, maintainAspectRatio: false, animation: false,
                             interaction: { intersect: false, mode: 'index' },
-                            scales: { 
-                                y: { 
-                                    beginAtZero: true, 
-                                    display: true,
-                                    grid: { color: '#374151', drawBorder: false }, 
-                                    ticks: { color: '#9ca3af', font: {size: 10} } 
-                                }, 
-                                x: { display: false } 
-                            },
+                            scales: { y: { beginAtZero: true, display: true, grid: { color: '#374151', drawBorder: false }, ticks: { color: '#9ca3af', font: {size: 10} } }, x: { display: false } },
                             plugins: { legend: { display: false } }
                         }
                     });
                 },
-
                 updateChart(val) {
                     if (!this.chart) return;
                     const data = this.chart.data.datasets[0].data;

@@ -7,10 +7,13 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # --- CONSTANTES ---
 URL_BASE = "https://descargasdd.org"
+
 SELECTOR_LOGOUT = "text=Finalizar sesión"
-SELECTOR_USER = "input[name='username']"
-SELECTOR_PASS = "input[name='password']"
+SELECTOR_USER = "input[name='vb_login_username']"
+SELECTOR_PASS = "input[name='vb_login_password']"
 SELECTOR_LOGIN_BTN = "input[value='Iniciar sesión']"
+SELECTOR_USER_ALT = "input[name='username']"
+SELECTOR_PASS_ALT = "input[name='password']"
 
 # --- UTILIDADES ---
 
@@ -21,57 +24,34 @@ def limpiar_texto(txt):
     if not txt: return ""
     return txt.strip()
 
-# --- PARSEO DE TÍTULOS ---
-
 def analizar_titulo(titulo_hilo):
-    """
-    Intenta extraer Título, Año y Formato del asunto del hilo.
-    Ej: "Dune: Parte Dos (2024) [BluRay 1080p X265 10bit]..."
-    """
-    titulo_hilo = titulo_hilo.replace(":", " ") # Limpieza básica
-    
-    # 1. Extraer AÑO
+    titulo_hilo = titulo_hilo.replace(":", " ") 
     match_anio = re.search(r'\((\d{4})\)', titulo_hilo)
     anio = match_anio.group(1) if match_anio else ""
     
-    # 2. Extraer FORMATO (Lógica simple basada en keywords)
-    formato = "1080p" # Default
+    formato = "1080p" 
     upper_tit = titulo_hilo.upper()
+    if "2160P" in upper_tit or "4K" in upper_tit or "UHD" in upper_tit: formato = "2160p"
+    elif "X265" in upper_tit or "HEVC" in upper_tit: formato = "x265"
+    elif "M1080P" in upper_tit or "MICRO" in upper_tit: formato = "m1080p"
     
-    if "2160P" in upper_tit or "4K" in upper_tit or "UHD" in upper_tit:
-        formato = "2160p"
-    elif "X265" in upper_tit or "HEVC" in upper_tit:
-        formato = "x265"
-    elif "M1080P" in upper_tit or "MICRO" in upper_tit:
-        formato = "m1080p"
-    
-    # 3. Limpiar TÍTULO (Quitar lo que hay después del año o corchetes)
-    # Si encontramos el año, cortamos ahí
     if anio:
         parts = titulo_hilo.split(f"({anio})")
         titulo_base = parts[0].strip()
     else:
-        # Si no hay año, intentamos cortar en el primer corchete
         titulo_base = titulo_hilo.split('[')[0].strip()
 
     return titulo_base, anio, formato
 
 def extraer_enlaces_post(contenido_html):
-    """
-    Busca enlaces de los hosters soportados dentro del HTML del post.
-    """
     enlaces_encontrados = []
-    # Regex simple para buscar URLs http/https
     urls = re.findall(r'https?://[^\s<>"\'\]]+', contenido_html)
-    
     for url in urls:
-        # Filtramos solo dominios que nos interesan (definidos en config)
         for dominio in config.HOSTER_PREFS.keys():
             if dominio in url.lower():
                 enlaces_encontrados.append(url)
                 break
-    
-    return list(set(enlaces_encontrados)) # Eliminar duplicados
+    return list(set(enlaces_encontrados)) 
 
 # --- NAVEGACIÓN Y SESIÓN ---
 
@@ -80,126 +60,107 @@ def validar_sesion(page):
     try:
         page.goto(URL_BASE, timeout=60000, wait_until="domcontentloaded")
         if page.locator(SELECTOR_LOGOUT).is_visible(timeout=5000):
-            print("   [SCRAPER] ✅ Sesión VÁLIDA. Saltando login.")
+            print("   [SCRAPER] ✅ Sesión VÁLIDA.")
             return True
-        print("   [SCRAPER] ⚠️ Sesión CADUCADA o INEXISTENTE.")
+        print("   [SCRAPER] ⚠️ Sesión NO VÁLIDA.")
         return False
     except: return False
 
 def realizar_login(page):
-    print("   [SCRAPER] Iniciando proceso de login...")
+    print("   [SCRAPER] Iniciando login...")
+    url_login = f"{URL_BASE}/login.php?do=login"
     try:
-        if "login" not in page.url:
-            page.goto(f"{URL_BASE}/login.php", wait_until="domcontentloaded")
-
-        page.fill(SELECTOR_USER, config.FORO_USER)
+        page.goto(url_login, wait_until="domcontentloaded", timeout=60000)
+        try:
+            page.wait_for_selector(SELECTOR_USER, state="visible", timeout=10000)
+            page.fill(SELECTOR_USER, config.FORO_USER)
+            page.fill(SELECTOR_PASS, config.FORO_PASS)
+        except:
+            page.fill(SELECTOR_USER_ALT, config.FORO_USER)
+            page.fill(SELECTOR_PASS_ALT, config.FORO_PASS)
         espera_humana()
-        page.fill(SELECTOR_PASS, config.FORO_PASS)
-        espera_humana()
-        page.click(SELECTOR_LOGIN_BTN)
+        try: page.click(SELECTOR_LOGIN_BTN, timeout=5000)
+        except: page.keyboard.press("Enter")
         page.wait_for_load_state("domcontentloaded")
         
-        if page.locator(SELECTOR_LOGOUT).is_visible():
+        if page.locator(SELECTOR_LOGOUT).is_visible(timeout=10000):
             print("   [SCRAPER] ✅ Login EXITOSO.")
             return True
         else:
             print("   [SCRAPER] ❌ Login FALLIDO.")
+            page.screenshot(path=f"{config.DOWNLOAD_DIR}/debug_login_error.png")
             return False
     except Exception as e:
         print(f"   [!] Excepción login: {e}")
         return False
 
-# --- PROCESADO DE HILOS ---
+# --- LOGICA DE PROCESADO ---
 
 def procesar_hilo(page, url_hilo, titulo_raw, foro_id):
-    """Entra en un hilo, extrae enlaces y guarda en DB"""
     try:
-        # 1. Analizar título
         titulo_base, anio, formato = analizar_titulo(titulo_raw)
         
-        # Filtros de exclusión (Blacklist)
         for palabra in config.PALABRAS_EXCLUIDAS:
-            if palabra in titulo_raw.upper():
-                # print(f"      [SKIP] Excluido por palabra clave: {palabra}")
-                return
+            if palabra in titulo_raw.upper(): return
 
-        # 2. Gestión de IDs en DB
         conn = db.get_connection()
         cur = conn.cursor()
         
-        # Verificar si la peli base ya existe en metadatos
         meta = db.buscar_pelicula_meta(cur, titulo_base)
-        if meta:
-            peli_id = meta[0]
-        else:
-            # Insertar nueva peli
-            print(f"      [NUEVA PELI] {titulo_base} ({anio})")
-            peli_id = db.insertar_pelicula_meta(conn, cur, titulo_base)
+        if meta: peli_id = meta[0]
+        else: peli_id = db.insertar_pelicula_meta(conn, cur, titulo_base)
         
-        # Extraer ID del hilo desde la URL (ej: showthread.php?t=12345)
         match_id = re.search(r't=(\d+)', url_hilo)
         hilo_id = match_id.group(1) if match_id else "0"
         
-        # Verificar si ya tenemos esta descarga específica (por hilo_id)
         descarga_existente = db.buscar_descarga(cur, hilo_id)
         
-        # Si ya existe y tiene enlaces, pasamos (asumimos procesada)
+        # Si ya existe Y tiene enlaces, no hacemos nada (asumimos OK)
         if descarga_existente and descarga_existente[0] and len(descarga_existente[0]) > 10:
             cur.close()
             conn.close()
             return
 
-        # 3. Entrar al hilo y extraer enlaces
-        # print(f"      [SCRAP] Procesando hilo: {titulo_raw[:40]}...")
+        print(f"      [ENTRANDO] Extrayendo enlaces: {titulo_raw[:40]}...")
         page.goto(url_hilo, wait_until="domcontentloaded")
         
-        # Selector del contenido del primer post
         content_html = page.inner_html("div.postcontent", timeout=5000)
         enlaces = extraer_enlaces_post(content_html)
         
         if enlaces:
             str_enlaces = "\n".join(enlaces)
-            # Guardamos o actualizamos en DB
             if descarga_existente:
                 db.actualizar_enlaces(conn, cur, hilo_id, str_enlaces)
-                print(f"      [UPDATE] Enlaces actualizados para: {titulo_base} [{formato}]")
+                print(f"      [UPDATE] Enlaces actualizados: {len(enlaces)} encontrados.")
             else:
                 db.insertar_descarga_hueco(conn, cur, peli_id, foro_id, hilo_id, formato, titulo_raw)
                 db.actualizar_enlaces(conn, cur, hilo_id, str_enlaces)
-                print(f"      [GUARDADO] {titulo_base} [{formato}] ({len(enlaces)} enlaces)")
+                print(f"      [NUEVO] Guardado: {titulo_base} [{formato}] ({len(enlaces)} links)")
         
         cur.close()
         conn.close()
         espera_humana()
 
     except Exception as e:
-        print(f"      [!] Error procesando hilo {url_hilo}: {e}")
+        print(f"      [!] Error en hilo {url_hilo}: {e}")
 
 def procesar_foro(page, foro_id):
-    """Recorre la lista de hilos de un subforo"""
     url_foro = f"{URL_BASE}/forumdisplay.php?f={foro_id}&order=desc"
-    print(f"   [SCRAPER] Entrando al Foro ID {foro_id}...")
-    
+    print(f"   [SCRAPER] Escaneando Índice del Foro ID {foro_id}...")
     try:
         page.goto(url_foro, wait_until="domcontentloaded")
-        
-        # Selectores para vBulletin 4 (común en DD)
-        # Buscamos los elementos de la lista de temas
-        # Ajusta el selector "li.threadbit" si el theme cambia
         hilos = page.locator("li.threadbit").all()
-        
-        # Limitamos a los primeros 10-15 hilos para no saturar en cada pasada
+        print(f"   [DEBUG] Se han detectado {len(hilos)} hilos en la primera página.")
+
         count = 0
         max_hilos = 15 
-        
         for hilo in hilos:
             if count >= max_hilos: break
-            
             try:
-                # Extraer título y URL sin navegar aún
+                if not hilo.is_visible(): continue
                 elemento_titulo = hilo.locator("a.title")
-                if not elemento_titulo.is_visible(): continue
-                
+                if elemento_titulo.count() == 0: continue
+
                 texto_titulo = elemento_titulo.inner_text().strip()
                 href_parcial = elemento_titulo.get_attribute("href")
                 
@@ -207,29 +168,71 @@ def procesar_foro(page, foro_id):
                     continue
 
                 url_completa = f"{URL_BASE}/{href_parcial}"
-                
-                # Procesamos el hilo individualmente
                 procesar_hilo(page, url_completa, texto_titulo, foro_id)
                 count += 1
-                
-            except Exception as e:
-                continue
-
+            except Exception: continue
     except Exception as e:
-        print(f"   [!] Error leyendo el índice del foro {foro_id}: {e}")
+        print(f"   [!] Error leyendo foro {foro_id}: {e}")
+
+# --- REPARACIÓN DE ENLACES ---
+
+def reparar_hilos_rotos(page):
+    """
+    Busca en DB películas sin enlaces y visita sus hilos específicamente.
+    """
+    rotas = db.obtener_descargas_sin_enlaces()
+    if not rotas:
+        return
+
+    print(f"\n   [REPARACIÓN] Detectadas {len(rotas)} descargas sin enlaces. Intentando reparar...")
+    
+    for item in rotas:
+        hilo_id = item[0]
+        titulo = item[1]
+        
+        # Construimos URL directa al hilo
+        url_hilo = f"{URL_BASE}/showthread.php?t={hilo_id}"
+        
+        print(f"      [REPARAR] Visitando hilo {hilo_id}: {titulo[:30]}...")
+        try:
+            page.goto(url_hilo, wait_until="domcontentloaded", timeout=60000)
+            
+            # Usamos la misma lógica de extracción
+            content_html = page.inner_html("div.postcontent", timeout=5000)
+            enlaces = extraer_enlaces_post(content_html)
+            
+            if enlaces:
+                str_enlaces = "\n".join(enlaces)
+                conn = db.get_connection()
+                cur = conn.cursor()
+                db.actualizar_enlaces(conn, cur, hilo_id, str_enlaces)
+                cur.close()
+                conn.close()
+                print(f"      [OK] ¡Reparado! {len(enlaces)} enlaces encontrados.")
+            else:
+                print("      [FAIL] No se encontraron enlaces (posiblemente caído o formato desconocido).")
+            
+            espera_humana()
+            
+        except Exception as e:
+            print(f"      [!] Error intentando reparar hilo {hilo_id}: {e}")
+
 
 # --- PUNTO DE ENTRADA ---
 
 def ejecutar(context):
     page = context.new_page()
     try:
-        # 1. Login Inteligente
         if not validar_sesion(page):
             if not realizar_login(page):
+                print("   [SCRAPER] ABORTANDO: Fallo login.")
                 page.close()
                 return 
 
-        # 2. Iterar Foros
+        # 1. FASE DE REPARACIÓN (Primero arreglamos lo roto)
+        reparar_hilos_rotos(page)
+
+        # 2. FASE DE ESCANEO NORMAL
         if hasattr(config, 'FOROS_PROCESAR'):
             for fid in config.FOROS_PROCESAR:
                 procesar_foro(page, fid)
